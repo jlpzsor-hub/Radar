@@ -11,7 +11,7 @@ API_BASE = "https://api.odds-api.io/v3"
 BOOKMAKERS = ["Bet365", "William Hill"]
 ALLOWED_SPORTS = {"football", "tennis", "basketball"}
 MIN_PRICE_GAP = 1.0
-EVENT_LIMIT_PER_BOOK = 25
+EVENT_LIMIT_PER_BOOK = 30
 CACHE_TTL = 45
 
 _cache = {}
@@ -54,7 +54,7 @@ footer{font-size:11px;color:#718096;line-height:1.5;padding:25px 4px}
 <div class="shell">
 <header>
 <div>
-<div class="eyebrow">RADAR PRIVADO · V0.5</div>
+<div class="eyebrow">RADAR PRIVADO · V0.6</div>
 <h1>Encuentra dónde pagan mejor.</h1>
 <p>Bet365 + William Hill · Fútbol · Tenis · Baloncesto</p>
 </div>
@@ -78,7 +78,7 @@ footer{font-size:11px;color:#718096;line-height:1.5;padding:25px 4px}
 
 <main id="cards"><div class="empty">Cargando oportunidades…</div></main>
 
-<footer><b>V0.5 privada.</b> Ahora comparamos directamente las cuotas de Bet365 y William Hill. Una diferencia de precio no garantiza por sí sola que la apuesta sea rentable. Verifica siempre mercado, línea y cuota antes de confirmar.</footer>
+<footer><b>V0.6 privada.</b> Ahora comparamos directamente las cuotas de Bet365 y William Hill. Una diferencia de precio no garantiza por sí sola que la apuesta sea rentable. Verifica siempre mercado, línea y cuota antes de confirmar.</footer>
 </div>
 
 <script>
@@ -137,8 +137,9 @@ async function load(){
     const r=await fetch(`/api/opportunities?sport=${encodeURIComponent(sport)}&mode=${encodeURIComponent(mode)}`,{cache:"no-store"});
     const d=await r.json();
     const items=d.items||[];
+    console.log("Radar debug", d.debug, d.errors);
     cards.innerHTML=items.length?items.map(x=>x.type==="covered"?covered(x):better(x)).join("")
-      :'<div class="empty">No hay diferencias válidas con estos filtros ahora mismo.<br><br>Prueba a actualizar en unos minutos.</div>';
+      :'<div class="empty">No encontramos comparaciones válidas ahora mismo.<br><br>La V0.6 consulta una lista única de eventos y después pide las cuotas de Bet365 y William Hill sobre los mismos partidos.</div>';
   }catch(e){
     cards.innerHTML=`<div class="empty">No se ha podido consultar el radar.<br>${esc(e.message)}</div>`;
   }
@@ -323,26 +324,19 @@ def extract_offers(event,bookmaker):
                 }
     return offers
 
-def fetch_events(sport,bookmaker):
-    return api_get("/events",{
-        "sport":sport,
-        "bookmaker":bookmaker,
-        "limit":EVENT_LIMIT_PER_BOOK
+def fetch_events(sport):
+    data = api_get("/events",{
+        "sport": sport,
+        "limit": EVENT_LIMIT_PER_BOOK
     })
-
-def shared_event_ids(sport):
-    a=fetch_events(sport,BOOKMAKERS[0])
-    b=fetch_events(sport,BOOKMAKERS[1])
-    if not isinstance(a,list) or not isinstance(b,list):
-        return []
-    ids_a={str(e.get("id")) for e in a if e.get("id") is not None}
-    ids_b={str(e.get("id")) for e in b if e.get("id") is not None}
-    return list(ids_a & ids_b)
+    return data if isinstance(data, list) else []
 
 def fetch_multi(ids):
     result=[]
     for i in range(0,len(ids),10):
         chunk=ids[i:i+10]
+        if not chunk:
+            continue
         data=api_get("/odds/multi",{
             "eventIds":",".join(chunk),
             "bookmakers":",".join(BOOKMAKERS)
@@ -397,11 +391,20 @@ def get_comparisons(sport):
     if cached and now-cached["ts"]<CACHE_TTL:
         return cached["data"]
 
-    ids=shared_event_ids(sport)
-    events=fetch_multi(ids)
+    # Important: do NOT intersect two separately paginated bookmaker event lists.
+    # Fetch one canonical event list, then request both books for those same IDs.
+    events = fetch_events(sport)
+    ids=[str(e.get("id")) for e in events if e.get("id") is not None]
+    odds_events=fetch_multi(ids)
+
     out=[]
-    for event in events:
+    for event in odds_events:
+        # Only compare when BOTH bookmakers really returned odds for this event.
+        books=event.get("bookmakers") or {}
+        if BOOKMAKERS[0] not in books or BOOKMAKERS[1] not in books:
+            continue
         out.extend(compare_event(event))
+
     out.sort(key=lambda x:x["price_gap"],reverse=True)
     _cache[key]={"ts":now,"data":out}
     return out
@@ -454,13 +457,18 @@ def opportunities():
     sports=list(ALLOWED_SPORTS) if sport=="all" else [sport]
     sports=[s for s in sports if s in ALLOWED_SPORTS]
     out=[]
+    debug={}
+    errors=[]
 
     if mode in ("all","better"):
         for s in sports:
             try:
-                out.extend(get_comparisons(s))
-            except Exception:
-                continue
+                data=get_comparisons(s)
+                debug[s]={"comparisons":len(data)}
+                out.extend(data)
+            except Exception as e:
+                errors.append(f"{s}: {type(e).__name__}: {e}")
+                debug[s]={"comparisons":0,"error":str(e)}
 
     if mode in ("all","covered"):
         try:
@@ -470,15 +478,18 @@ def opportunities():
                 "includeEventDetails":"true"
             })
             if isinstance(arbs,list):
+                count=0
                 for item in arbs:
                     x=human_arb(item)
                     if x["sport"] in sports:
                         out.append(x)
-        except Exception:
-            pass
+                        count+=1
+                debug["arbitrage"]=count
+        except Exception as e:
+            errors.append(f"arbitrage: {type(e).__name__}: {e}")
 
     out.sort(key=lambda x:x.get("profit",x.get("price_gap",0)) or 0,reverse=True)
-    return jsonify({"items":out[:100]})
+    return jsonify({"items":out[:100],"debug":debug,"errors":errors})
 
 if __name__=="__main__":
     app.run(host="0.0.0.0",port=int(os.getenv("PORT","8000")))
