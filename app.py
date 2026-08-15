@@ -1,7 +1,5 @@
 
 import os
-import time
-import math
 import requests
 from flask import Flask, jsonify, request, Response
 
@@ -10,11 +8,6 @@ app = Flask(__name__)
 API_BASE = "https://api.odds-api.io/v3"
 BOOKMAKERS = ["Bet365", "William Hill"]
 ALLOWED_SPORTS = {"football", "tennis", "basketball"}
-MIN_PRICE_GAP = 1.0
-EVENT_LIMIT_PER_BOOK = 30
-CACHE_TTL = 45
-
-_cache = {}
 
 HTML = r"""<!doctype html>
 <html lang="es">
@@ -35,13 +28,13 @@ h1{font-size:31px;line-height:1.03;margin:7px 0 8px}p{color:var(--muted);margin:
 .status{margin:20px 0 12px;padding:11px 13px;border:1px solid var(--line);border-radius:14px;color:var(--muted);font-size:13px}.ok{color:#b7f7df}
 .row{display:flex;gap:8px;overflow:auto;padding:5px 0}.chip{white-space:nowrap;border:1px solid var(--line);background:#121c2f;color:#cbd5e1;border-radius:999px;padding:10px 13px;font-weight:800}.chip.active{background:white;color:#0b1220}
 #cards{display:grid;gap:12px;margin-top:12px}.card{background:linear-gradient(180deg,#182640,#121c2f);border:1px solid var(--line);border-radius:22px;padding:17px}
-.top{display:flex;justify-content:space-between;gap:12px;align-items:center}.badge{font-size:12px;font-weight:900;padding:7px 9px;border-radius:999px}.better{background:#123c32;color:#75efc1}.covered{background:#17355d;color:#a6cbff}.review{background:#4b3410;color:#ffd68a}
+.top{display:flex;justify-content:space-between;gap:12px;align-items:center}.badge{font-size:12px;font-weight:900;padding:7px 9px;border-radius:999px}.better{background:#123c32;color:#75efc1}.covered{background:#17355d;color:#a6cbff}.review{background:#4b3410;color:#ffd68a}.single{background:#252d3e;color:#d7deea}
 .metric{font-size:21px;font-weight:900}.metric small{display:block;color:var(--muted);font-size:10px;text-align:right}
 .event{font-size:19px;font-weight:900;margin:13px 0 4px}.meta{font-size:12px;color:var(--muted)}
 .market{margin:14px 0;background:rgba(255,255,255,.05);border-radius:15px;padding:12px}.market-title{font-weight:900;margin-bottom:4px}.selection{color:#dbe3ee}
 .compare{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}
 .book{display:block;background:rgba(255,255,255,.05);border:1px solid transparent;border-radius:15px;padding:12px;color:inherit;text-decoration:none}
-.book.best{border-color:#2d8c68;background:rgba(45,140,104,.12)}.book.disabled{opacity:.72}
+.book.best{border-color:#2d8c68;background:rgba(45,140,104,.12)}.book.disabled{opacity:.62}
 .book-name{font-size:12px;color:var(--muted);font-weight:800}.book-price{font-size:27px;font-weight:950;margin-top:5px}
 .best-label{font-size:10px;font-weight:900;color:#75efc1;margin-top:4px}.open-label{font-size:10px;font-weight:900;color:#9cc7ff;margin-top:4px}
 .msg{font-size:14px;line-height:1.45;color:#dbe3ee}.fresh{font-size:11px;color:#94a3b8;margin-top:10px}
@@ -54,7 +47,7 @@ footer{font-size:11px;color:#718096;line-height:1.5;padding:25px 4px}
 <div class="shell">
 <header>
 <div>
-<div class="eyebrow">RADAR PRIVADO · V0.6</div>
+<div class="eyebrow">RADAR PRIVADO · V0.7</div>
 <h1>Encuentra dónde pagan mejor.</h1>
 <p>Bet365 + William Hill · Fútbol · Tenis · Baloncesto</p>
 </div>
@@ -78,7 +71,7 @@ footer{font-size:11px;color:#718096;line-height:1.5;padding:25px 4px}
 
 <main id="cards"><div class="empty">Cargando oportunidades…</div></main>
 
-<footer><b>V0.6 privada.</b> Ahora comparamos directamente las cuotas de Bet365 y William Hill. Una diferencia de precio no garantiza por sí sola que la apuesta sea rentable. Verifica siempre mercado, línea y cuota antes de confirmar.</footer>
+<footer><b>V0.7 privada.</b> Priorizamos que el radar siga mostrando oportunidades reales del feed. Cuando las dos casas ofrecen exactamente el mismo mercado, las compara; si solo una casa devuelve ese mercado, lo indica sin inventar una comparación.</footer>
 </div>
 
 <script>
@@ -89,7 +82,11 @@ const n=x=>Number.isFinite(Number(x))?Number(x).toFixed(2):(x??"—");
 const ev=x=>[x.home,x.away].filter(Boolean).join(" – ")||"Evento";
 
 function better(x){
-  const warn=Number(x.price_gap||0)>=25;
+  const compared=!!x.compared;
+  const warn=compared && Number(x.price_gap||0)>=25;
+  const badgeClass=compared?(warn?"review":"better"):"single";
+  const badgeText=compared?(warn?"🟠 REVISAR DIFERENCIA":"🟢 PAGAN MEJOR AQUÍ"):"⚪ OPORTUNIDAD DETECTADA";
+
   const books=(x.prices||[]).map(b=>{
     const inner=`<div class="book-name">${esc(b.bookmaker)}</div>
       <div class="book-price">@ ${esc(b.odds??"—")}</div>
@@ -97,23 +94,23 @@ function better(x){
       ${b.link?'<div class="open-label">ABRIR EN LA CASA ↗</div>':''}`;
     return b.link
       ? `<a class="book ${b.best?"best":""}" href="${esc(b.link)}" target="_blank" rel="noopener noreferrer">${inner}</a>`
-      : `<div class="book disabled ${b.best?"best":""}">${inner}</div>`;
+      : `<div class="book ${b.odds==null?"disabled":""} ${b.best?"best":""}">${inner}</div>`;
   }).join("");
 
   return `<article class="card">
     <div class="top">
-      <span class="badge ${warn?"review":"better"}">${warn?"🟠 REVISAR DIFERENCIA":"🟢 PAGAN MEJOR AQUÍ"}</span>
-      <div class="metric">+${n(x.price_gap)}%<small>paga más</small></div>
+      <span class="badge ${badgeClass}">${badgeText}</span>
+      <div class="metric">${compared?`+${n(x.price_gap)}%`:`+${n(x.provider_advantage)}%`}<small>${compared?"paga más":"señal del feed"}</small></div>
     </div>
     <div class="event">${esc(ev(x))}</div>
     <div class="meta">${esc(x.league||x.sport||"")}</div>
     <div class="market">
-      <div class="market-title">${esc(x.market_label)}</div>
-      <div class="selection">${esc(x.selection_label)}</div>
+      <div class="market-title">${esc(x.market_label||x.market||"Mercado")}</div>
+      <div class="selection">${esc(x.selection_label||x.selection||"")}</div>
       <div class="compare">${books}</div>
     </div>
     <div class="msg">${esc(x.message)}</div>
-    <div class="fresh">${esc(x.freshness||"Cuotas consultadas ahora")}</div>
+    <div class="fresh">${esc(x.freshness||"Actualizado recientemente")}</div>
   </article>`;
 }
 
@@ -132,18 +129,18 @@ function covered(x){
 }
 
 async function load(){
-  cards.innerHTML='<div class="empty">Comparando Bet365 y William Hill…</div>';
+  cards.innerHTML='<div class="empty">Buscando oportunidades…</div>';
   try{
     const r=await fetch(`/api/opportunities?sport=${encodeURIComponent(sport)}&mode=${encodeURIComponent(mode)}`,{cache:"no-store"});
     const d=await r.json();
     const items=d.items||[];
-    console.log("Radar debug", d.debug, d.errors);
     cards.innerHTML=items.length?items.map(x=>x.type==="covered"?covered(x):better(x)).join("")
-      :'<div class="empty">No encontramos comparaciones válidas ahora mismo.<br><br>La V0.6 consulta una lista única de eventos y después pide las cuotas de Bet365 y William Hill sobre los mismos partidos.</div>';
+      :'<div class="empty">Ahora mismo no hay oportunidades con estos filtros.<br><br>Prueba a actualizar en unos minutos.</div>';
   }catch(e){
     cards.innerHTML=`<div class="empty">No se ha podido consultar el radar.<br>${esc(e.message)}</div>`;
   }
 }
+
 async function st(){
   try{
     const r=await fetch("/api/status"),s=await r.json();
@@ -172,16 +169,6 @@ def api_get(path, params=None):
     r.raise_for_status()
     return r.json()
 
-def sport_slug(x):
-    if isinstance(x,dict):
-        return (x.get("slug") or x.get("name") or "").lower()
-    return (x or "").lower()
-
-def league_name(x):
-    if isinstance(x,dict):
-        return x.get("name") or x.get("slug") or ""
-    return x or ""
-
 def fnum(x):
     try:
         v=float(x)
@@ -189,232 +176,298 @@ def fnum(x):
     except:
         return None
 
+def sport_slug(x):
+    if isinstance(x,dict):
+        return (x.get("slug") or x.get("name") or "").strip().lower()
+    return (x or "").strip().lower()
+
+def league_name(x):
+    if isinstance(x,dict):
+        return x.get("name") or x.get("slug") or ""
+    return x or ""
+
 def compact(s):
     return " ".join(str(s or "").strip().lower().replace("_"," ").replace("-"," ").split())
 
 def canonical_market(name):
     n=compact(name)
-    aliases={
-        "moneyline":"ml","match winner":"ml","winner":"ml","ml":"ml",
-        "spread":"spread","handicap":"spread","asian handicap":"spread",
-        "totals":"totals","total":"totals","over under":"totals",
-        "spread ht":"spread ht","handicap ht":"spread ht",
-        "totals ht":"totals ht","total ht":"totals ht",
-        "spread 1q":"spread 1q","totals 1q":"totals 1q",
-        "spread 1h":"spread 1h","totals 1h":"totals 1h",
-    }
-    return aliases.get(n,n)
+    if n in {"ml","moneyline","match winner","winner"}: return "ml"
+    if "total" in n or "over under" in n: return "totals"
+    if "spread" in n or "handicap" in n: return "spread"
+    if "both teams" in n or "btts" in n: return "btts"
+    if "draw no bet" in n or "dnb" in n: return "dnb"
+    return n
+
+def line_value(market,row=None):
+    row=row or {}
+    for source in (row,market):
+        for key in ("hdp","line","handicap","total"):
+            if source.get(key) not in (None,""):
+                try:return float(source.get(key))
+                except:return source.get(key)
+    return None
+
+def label_for_side(market,side):
+    v=market.get(side)
+    return str(v).strip() if v not in (None,"") else ""
 
 def human_market(name,sport):
     c=canonical_market(name)
-    mapping={
-        "ml":"Ganador del partido",
-        "spread":"Hándicap",
-        "spread ht":"Hándicap · 1ª parte",
-        "spread 1q":"Hándicap · 1º cuarto",
-        "spread 1h":"Hándicap · 1ª mitad",
-        "totals ht":"Total · 1ª parte",
-        "totals 1q":"Total · 1º cuarto",
-        "totals 1h":"Total · 1ª mitad",
-    }
+    if c=="ml": return "Ganador del partido"
+    if c=="spread": return "Hándicap"
     if c=="totals":
         return "Total de juegos" if sport=="tennis" else ("Total de puntos" if sport=="basketball" else "Total de goles")
-    return mapping.get(c,name or "Mercado")
-
-def line_value(market,row):
-    for source in (row,market):
-        for key in ("hdp","line","handicap","total"):
-            if key in source and source.get(key) not in (None,""):
-                try:return round(float(source.get(key)),4)
-                except:return str(source.get(key))
-    return None
-
-def market_label_for_side(market,side):
-    raw=market.get(side)
-    return str(raw).strip() if raw not in (None,"") else ""
+    if c=="btts": return "Marcan ambos"
+    if c=="dnb": return "Empate no cuenta"
+    return name or "Mercado"
 
 def canonical_side(market_name,market,side):
     s=compact(side)
     c=canonical_market(market_name)
-    label=compact(market_label_for_side(market,side))
-
-    # Totals are frequently transported as home/away but labelled Over/Under.
-    if c.startswith("totals"):
-        if label in {"over","more","más","mas"} or s=="over":
-            return "over"
-        if label in {"under","less","menos"} or s=="under":
-            return "under"
-        if s=="home":
-            return "over"
-        if s=="away":
-            return "under"
-
-    if s in {"home","away","draw","over","under"}:
-        return s
+    lab=compact(label_for_side(market,side))
+    if c=="totals":
+        if "over" in lab or "más" in lab or "mas" in lab: return "over"
+        if "under" in lab or "menos" in lab: return "under"
+        if s=="home": return "over"
+        if s=="away": return "under"
     return s
 
-def selection_label(market_name,market,side,line,home,away):
+def human_selection(market_name,market,side,line,home,away):
     cs=canonical_side(market_name,market,side)
-    label=market_label_for_side(market,side)
     c=canonical_market(market_name)
+    raw=label_for_side(market,side)
 
-    if c.startswith("totals"):
+    if c=="totals":
         if cs=="over": return f"Más de {line}" if line is not None else "Más de"
         if cs=="under": return f"Menos de {line}" if line is not None else "Menos de"
 
-    if c.startswith("spread"):
-        participant=home if cs=="home" else away if cs=="away" else (label or side)
+    if c=="spread":
+        who=home if cs=="home" else away if cs=="away" else (raw or side)
         if line is not None:
-            sign="+" if isinstance(line,(int,float)) and line>0 else ""
-            return f"{participant} {sign}{line}"
-        return participant
+            try:
+                sign="+" if float(line)>0 else ""
+                return f"{who} {sign}{line:g}"
+            except:
+                return f"{who} {line}"
+        return who
 
     if c=="ml":
         if cs=="home": return home
         if cs=="away": return away
         if cs=="draw": return "Empate"
 
-    return label or (home if cs=="home" else away if cs=="away" else "Empate" if cs=="draw" else side)
+    return raw or (home if cs=="home" else away if cs=="away" else "Empate" if cs=="draw" else side)
 
-def direct_link(event,bookmaker,market,row,side):
-    for key in (f"{side}DirectLink","directLink","href"):
-        if row.get(key): return row.get(key)
-    for key in (f"{side}DirectLink","directLink","href"):
-        if market.get(key): return market.get(key)
-    urls=event.get("urls") or {}
-    url=urls.get(bookmaker)
-    if isinstance(url,str): return url
-    if isinstance(url,dict):
-        return url.get("href") or url.get("directLink") or ""
-    return ""
+def ev_adv(raw):
+    try:
+        v=float(raw)
+        return round(v-100,2) if v>=100 else round(v,2)
+    except:
+        return 0.0
 
-def extract_offers(event,bookmaker):
-    offers={}
-    markets=(event.get("bookmakers") or {}).get(bookmaker) or []
-    home,away=event.get("home",""),event.get("away","")
+def value_direct_link(bo,side):
+    return (
+        bo.get(f"{side}DirectLink")
+        or bo.get("directLink")
+        or bo.get("href")
+        or ""
+    )
+
+def parse_value(item):
+    event=item.get("event") or {}
+    market=item.get("market") or {}
+    bo=item.get("bookmakerOdds") or {}
+    side=(item.get("betSide") or "").lower()
+    odd=fnum(bo.get(side))
+    if odd is None:
+        odd=fnum(
+            bo.get("home") if side=="home"
+            else bo.get("away") if side=="away"
+            else bo.get("draw") if side=="draw"
+            else None
+        )
+
     sport=sport_slug(event.get("sport"))
+    line=line_value(market)
+    return {
+        "event_id":item.get("eventId"),
+        "sport":sport,
+        "league":league_name(event.get("league")),
+        "home":event.get("home",""),
+        "away":event.get("away",""),
+        "market":market.get("name","Mercado"),
+        "market_obj":market,
+        "line":line,
+        "side":side,
+        "bookmaker":item.get("bookmaker",""),
+        "odds":odd,
+        "link":value_direct_link(bo,side),
+        "provider_advantage":ev_adv(item.get("expectedValue",0)),
+        "updated_at":item.get("expectedValueUpdatedAt","")
+    }
+
+def get_event_odds(event_id):
+    # Try the most direct endpoint first; fall back to /odds/multi.
+    for path,params in (
+        ("/odds",{"eventId":event_id,"bookmakers":",".join(BOOKMAKERS)}),
+        ("/odds/multi",{"eventIds":str(event_id),"bookmakers":",".join(BOOKMAKERS)})
+    ):
+        try:
+            data=api_get(path,params)
+            if isinstance(data,list):
+                return data[0] if data else {}
+            if isinstance(data,dict):
+                # Some APIs wrap the actual event.
+                if "bookmakers" in data: return data
+                if isinstance(data.get("data"),dict): return data["data"]
+        except:
+            pass
+    return {}
+
+def market_equiv(a,b):
+    return canonical_market(a)==canonical_market(b)
+
+def line_equiv(a,b):
+    if a is None or b is None: return True
+    try:return abs(float(a)-float(b))<1e-9
+    except:return str(a)==str(b)
+
+def extract_other_quote(event_data, target_book, target):
+    books=(event_data or {}).get("bookmakers") or {}
+    markets=books.get(target_book) or []
+    target_market=target["market"]
+    target_line=target["line"]
+    target_side=canonical_side(target_market,target["market_obj"],target["side"])
+    target_label=compact(label_for_side(target["market_obj"],target["side"]))
 
     for market in markets:
-        mname=market.get("name") or "Mercado"
-        cm=canonical_market(mname)
+        mname=market.get("name") or ""
+        if not market_equiv(mname,target_market):
+            continue
         rows=market.get("odds") or []
-        if not isinstance(rows,list): continue
-
         for row in rows:
-            if not isinstance(row,dict): continue
-            line=line_value(market,row)
+            row_line=line_value(market,row)
+            if not line_equiv(row_line,target_line):
+                continue
 
+            candidates=[]
             for side in ("home","away","draw","over","under"):
-                odd=fnum(row.get(side))
-                if odd is None: continue
-
+                val=fnum(row.get(side))
+                if val is None: continue
                 cs=canonical_side(mname,market,side)
-                key=(cm,str(line),cs)
-                # keep best duplicate quote from same bookmaker
-                if key in offers and offers[key]["odds"]>=odd:
-                    continue
-                offers[key]={
-                    "odds":odd,
-                    "link":direct_link(event,bookmaker,market,row,side),
-                    "market_label":human_market(mname,sport),
-                    "selection_label":selection_label(mname,market,side,line,home,away),
-                    "line":line,
-                    "market_name":mname,
-                    "side":cs
-                }
-    return offers
+                lab=compact(label_for_side(market,side))
+                score=0
+                if cs==target_side: score+=2
+                if target_label and lab==target_label: score+=3
+                candidates.append((score,side,val))
 
-def fetch_events(sport):
-    data = api_get("/events",{
-        "sport": sport,
-        "limit": EVENT_LIMIT_PER_BOOK
-    })
-    return data if isinstance(data, list) else []
+            if not candidates:
+                continue
 
-def fetch_multi(ids):
-    result=[]
-    for i in range(0,len(ids),10):
-        chunk=ids[i:i+10]
-        if not chunk:
-            continue
-        data=api_get("/odds/multi",{
-            "eventIds":",".join(chunk),
-            "bookmakers":",".join(BOOKMAKERS)
+            candidates.sort(reverse=True,key=lambda x:x[0])
+            score,side,val=candidates[0]
+            if score<=0:
+                continue
+
+            link=(
+                row.get(f"{side}DirectLink")
+                or row.get("directLink")
+                or row.get("href")
+                or market.get("href")
+                or market.get("directLink")
+                or ""
+            )
+            return {"odds":val,"link":link}
+    return None
+
+def make_card(v):
+    other_book=BOOKMAKERS[1] if v["bookmaker"]==BOOKMAKERS[0] else BOOKMAKERS[0]
+    other=None
+    if v["event_id"] is not None:
+        event_data=get_event_odds(v["event_id"])
+        other=extract_other_quote(event_data,other_book,v)
+
+    prices=[]
+    quoted={
+        v["bookmaker"]:{"odds":v["odds"],"link":v["link"]},
+        other_book:other or {"odds":None,"link":""}
+    }
+
+    compared=other is not None and other.get("odds") is not None and v["odds"] is not None
+    if compared:
+        best_book=max(quoted,key=lambda b:quoted[b]["odds"])
+        worst_book=min(quoted,key=lambda b:quoted[b]["odds"])
+        best_odds=quoted[best_book]["odds"]
+        worst_odds=quoted[worst_book]["odds"]
+        gap=round((best_odds/worst_odds-1)*100,2)
+        message=f"{best_book} ofrece {best_odds:.2f} frente a {worst_odds:.2f} en {worst_book}."
+    else:
+        best_book=v["bookmaker"]
+        gap=0.0
+        message=f"{v['bookmaker']} ofrece {v['odds']:.2f}. La otra casa no devuelve ahora mismo este mercado exacto en el feed."
+
+    for b in BOOKMAKERS:
+        q=quoted.get(b) or {}
+        prices.append({
+            "bookmaker":b,
+            "odds":q.get("odds"),
+            "link":q.get("link",""),
+            "best":b==best_book
         })
-        if isinstance(data,list):
-            result.extend(data)
-    return result
 
-def compare_event(event):
-    offers_a=extract_offers(event,BOOKMAKERS[0])
-    offers_b=extract_offers(event,BOOKMAKERS[1])
-    shared=set(offers_a)&set(offers_b)
-    out=[]
-    home,away=event.get("home",""),event.get("away","")
-    sport=sport_slug(event.get("sport"))
-    league=league_name(event.get("league"))
+    return {
+        "type":"better_price",
+        "sport":v["sport"],
+        "league":v["league"],
+        "home":v["home"],
+        "away":v["away"],
+        "market_label":human_market(v["market"],v["sport"]),
+        "selection_label":human_selection(v["market"],v["market_obj"],v["side"],v["line"],v["home"],v["away"]),
+        "prices":prices,
+        "compared":compared,
+        "price_gap":gap,
+        "provider_advantage":v["provider_advantage"],
+        "message":message,
+        "freshness":"Comparación confirmada" if compared else "Pendiente de segunda cuota"
+    }
 
-    for key in shared:
-        a,b=offers_a[key],offers_b[key]
-        if not a["odds"] or not b["odds"]: continue
+def get_value_cards(sports):
+    raw=[]
+    for bookmaker in BOOKMAKERS:
+        for sport in sports:
+            try:
+                data=api_get("/value-bets",{
+                    "bookmaker":bookmaker,
+                    "sport":sport,
+                    "includeEventDetails":"true"
+                })
+                if isinstance(data,list):
+                    for item in data:
+                        v=parse_value(item)
+                        if v["sport"] in ALLOWED_SPORTS and v["odds"] is not None:
+                            raw.append(v)
+            except:
+                continue
 
-        if a["odds"]>=b["odds"]:
-            best_book,best,other_book,other=BOOKMAKERS[0],a,BOOKMAKERS[1],b
-        else:
-            best_book,best,other_book,other=BOOKMAKERS[1],b,BOOKMAKERS[0],a
+    # Deduplicate the same event/market/line/side; keep strongest signal.
+    dedup={}
+    for v in raw:
+        key=(v["event_id"],canonical_market(v["market"]),str(v["line"]),canonical_side(v["market"],v["market_obj"],v["side"]))
+        if key not in dedup or v["provider_advantage"]>dedup[key]["provider_advantage"]:
+            dedup[key]=v
 
-        gap=(best["odds"]/other["odds"]-1)*100
-        if gap<MIN_PRICE_GAP: continue
+    # Limit expensive enrichment to strongest opportunities.
+    candidates=sorted(dedup.values(),key=lambda x:x["provider_advantage"],reverse=True)[:35]
+    cards=[make_card(v) for v in candidates]
 
-        out.append({
-            "type":"better_price",
-            "sport":sport,
-            "league":league,
-            "home":home,
-            "away":away,
-            "market_label":best["market_label"],
-            "selection_label":best["selection_label"],
-            "price_gap":round(gap,2),
-            "prices":[
-                {"bookmaker":BOOKMAKERS[0],"odds":round(a["odds"],3),"best":BOOKMAKERS[0]==best_book,"link":a["link"]},
-                {"bookmaker":BOOKMAKERS[1],"odds":round(b["odds"],3),"best":BOOKMAKERS[1]==best_book,"link":b["link"]}
-            ],
-            "message":f"{best_book} ofrece {best['odds']:.2f} frente a {other['odds']:.2f} en {other_book}.",
-            "freshness":"Comparado directamente en ambas casas"
-        })
-    return out
-
-def get_comparisons(sport):
-    key=f"cmp:{sport}"
-    now=time.time()
-    cached=_cache.get(key)
-    if cached and now-cached["ts"]<CACHE_TTL:
-        return cached["data"]
-
-    # Important: do NOT intersect two separately paginated bookmaker event lists.
-    # Fetch one canonical event list, then request both books for those same IDs.
-    events = fetch_events(sport)
-    ids=[str(e.get("id")) for e in events if e.get("id") is not None]
-    odds_events=fetch_multi(ids)
-
-    out=[]
-    for event in odds_events:
-        # Only compare when BOTH bookmakers really returned odds for this event.
-        books=event.get("bookmakers") or {}
-        if BOOKMAKERS[0] not in books or BOOKMAKERS[1] not in books:
-            continue
-        out.extend(compare_event(event))
-
-    out.sort(key=lambda x:x["price_gap"],reverse=True)
-    _cache[key]={"ts":now,"data":out}
-    return out
+    # Compared opportunities first, then feed-only opportunities.
+    cards.sort(key=lambda x:(1 if x["compared"] else 0,x["price_gap"] if x["compared"] else x["provider_advantage"]),reverse=True)
+    return cards
 
 def human_arb(item):
     event=item.get("event") or {}
     sport=sport_slug(event.get("sport"))
     market=item.get("market") or {}
-    mname=market.get("name") or market.get("label") or "Mercado"
-    hdp=market.get("hdp")
     stakes={(x.get("bookmaker"),x.get("side")):x for x in (item.get("optimalStakes") or [])}
     legs=[]
     for leg in item.get("legs") or []:
@@ -426,14 +479,16 @@ def human_arb(item):
             "stake":s.get("stake"),
             "link":leg.get("directLink") or leg.get("href") or ""
         })
+    try:profit=float(item.get("profitMargin") or 0)
+    except:profit=0
     return {
         "type":"covered",
         "sport":sport,
         "league":league_name(event.get("league")),
         "home":event.get("home",""),
         "away":event.get("away",""),
-        "market_label":human_market(mname,sport),
-        "profit":round(float(item.get("profitMargin") or 0),2),
+        "market_label":human_market(market.get("name") or market.get("label") or "Mercado",sport),
+        "profit":round(profit,2),
         "legs":legs,
         "message":"Si consigues colocar todas las apuestas a estas cuotas, el resultado queda cubierto."
     }
@@ -457,39 +512,33 @@ def opportunities():
     sports=list(ALLOWED_SPORTS) if sport=="all" else [sport]
     sports=[s for s in sports if s in ALLOWED_SPORTS]
     out=[]
-    debug={}
-    errors=[]
 
     if mode in ("all","better"):
-        for s in sports:
-            try:
-                data=get_comparisons(s)
-                debug[s]={"comparisons":len(data)}
-                out.extend(data)
-            except Exception as e:
-                errors.append(f"{s}: {type(e).__name__}: {e}")
-                debug[s]={"comparisons":0,"error":str(e)}
+        out.extend(get_value_cards(sports))
 
     if mode in ("all","covered"):
         try:
-            arbs=api_get("/arbitrage-bets",{
+            data=api_get("/arbitrage-bets",{
                 "bookmakers":",".join(BOOKMAKERS),
                 "limit":100,
                 "includeEventDetails":"true"
             })
-            if isinstance(arbs,list):
-                count=0
-                for item in arbs:
+            if isinstance(data,list):
+                for item in data:
                     x=human_arb(item)
                     if x["sport"] in sports:
                         out.append(x)
-                        count+=1
-                debug["arbitrage"]=count
-        except Exception as e:
-            errors.append(f"arbitrage: {type(e).__name__}: {e}")
+        except:
+            pass
 
-    out.sort(key=lambda x:x.get("profit",x.get("price_gap",0)) or 0,reverse=True)
-    return jsonify({"items":out[:100],"debug":debug,"errors":errors})
+    out.sort(
+        key=lambda x:(
+            2 if x["type"]=="covered" else 1 if x.get("compared") else 0,
+            x.get("profit",x.get("price_gap",x.get("provider_advantage",0))) or 0
+        ),
+        reverse=True
+    )
+    return jsonify({"items":out[:80]})
 
 if __name__=="__main__":
     app.run(host="0.0.0.0",port=int(os.getenv("PORT","8000")))
