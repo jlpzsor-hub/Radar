@@ -1,158 +1,127 @@
 
 import os
 import requests
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, request, Response
 
 app = Flask(__name__)
-
 API_BASE = "https://api.odds-api.io/v3"
 BOOKMAKERS = ["Bet365", "William Hill"]
-SPORTS = {"football": "Fútbol", "tennis": "Tenis", "basketball": "Baloncesto"}
+
+HTML = r"""<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b1220">
+<title>Radar Privado</title>
+<style>
+:root{--bg:#0b1220;--panel:#142038;--line:#263957;--txt:#f8fafc;--muted:#94a3b8;--green:#55e6ae;--blue:#8ab8ff}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#07101e,#0b1220);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.shell{max-width:720px;margin:auto;padding:calc(env(safe-area-inset-top) + 18px) 16px 40px}
+header{display:flex;justify-content:space-between;gap:12px}.eyebrow{font-size:11px;font-weight:900;letter-spacing:.13em;color:#7dd3fc}
+h1{font-size:31px;line-height:1.03;margin:7px 0 8px}p{color:var(--muted);margin:0}.refresh{border:0;border-radius:14px;background:#fff;color:#08111f;font-weight:900;padding:11px 13px;height:42px}
+.status{margin:20px 0 12px;padding:11px 13px;border:1px solid var(--line);border-radius:14px;color:var(--muted);font-size:13px}.ok{color:#b7f7df}
+.row{display:flex;gap:8px;overflow:auto;padding:5px 0}.chip{white-space:nowrap;border:1px solid var(--line);background:#121c2f;color:#cbd5e1;border-radius:999px;padding:10px 13px;font-weight:800}.chip.active{background:white;color:#0b1220}
+#cards{display:grid;gap:12px;margin-top:12px}.card{background:linear-gradient(180deg,#182640,#121c2f);border:1px solid var(--line);border-radius:22px;padding:17px}
+.top{display:flex;justify-content:space-between;gap:12px;align-items:center}.badge{font-size:12px;font-weight:900;padding:7px 9px;border-radius:999px}.better{background:#123c32;color:#75efc1}.covered{background:#17355d;color:#a6cbff}
+.metric{font-size:21px;font-weight:900}.event{font-size:19px;font-weight:900;margin:13px 0 4px}.meta{font-size:12px;color:var(--muted)}
+.market{margin:14px 0;background:rgba(255,255,255,.05);border-radius:15px;padding:12px}.price{font-size:26px;font-weight:900;margin-top:7px}.msg{font-size:14px;line-height:1.45;color:#dbe3ee}
+.leg{background:rgba(255,255,255,.05);border-radius:14px;padding:11px;display:flex;justify-content:space-between;margin-top:8px}.empty{text-align:center;color:var(--muted);padding:40px 15px}
+footer{font-size:11px;color:#718096;line-height:1.5;padding:25px 4px}
+</style>
+</head>
+<body>
+<div class="shell">
+<header><div><div class="eyebrow">RADAR PRIVADO · V0</div><h1>Encuentra dónde pagan mejor.</h1><p>Bet365 + William Hill · Fútbol · Tenis · Baloncesto</p></div><button class="refresh" id="refresh">Actualizar</button></header>
+<div id="status" class="status">Comprobando conexión…</div>
+<div class="row">
+<button class="chip active" data-sport="all">Todo</button>
+<button class="chip" data-sport="football">⚽ Fútbol</button>
+<button class="chip" data-sport="tennis">🎾 Tenis</button>
+<button class="chip" data-sport="basketball">🏀 Basket</button>
+</div>
+<div class="row">
+<button class="chip mode active" data-mode="all">Todas</button>
+<button class="chip mode" data-mode="better">Pagan más</button>
+<button class="chip mode" data-mode="covered">Ganancia cubierta</button>
+</div>
+<main id="cards"><div class="empty">Cargando oportunidades…</div></main>
+<footer><b>V0 privada.</b> Las cuotas cambian. Verifica siempre mercado, línea y precio antes de confirmar.</footer>
+</div>
+<script>
+let sport="all",mode="all";
+const cards=document.getElementById("cards"),statusEl=document.getElementById("status");
+const esc=x=>String(x??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m]));
+const n=x=>Number.isFinite(Number(x))?Number(x).toFixed(2):(x??"—");
+const ev=x=>[x.home,x.away].filter(Boolean).join(" – ")||"Evento";
+function better(x){return `<article class="card"><div class="top"><span class="badge better">🟢 ESTA CASA PAGA MÁS</span><div class="metric">+${n(x.advantage)}%</div></div><div class="event">${esc(ev(x))}</div><div class="meta">${esc(x.league||x.sport||"")}</div><div class="market"><b>${esc(x.market||"Mercado")}</b><div>${esc(x.bookmaker)} · ${esc(x.selection)}</div><div class="price">@ ${esc(x.odds||"—")}</div></div><div class="msg">${esc(x.message)}</div></article>`}
+function covered(x){let legs=(x.legs||[]).map(l=>`<div class="leg"><div><b>${esc(l.bookmaker)}</b><br>${esc(l.selection)}</div><div style="text-align:right"><b>@ ${esc(l.odds||"—")}</b>${l.stake!=null?`<br>${n(l.stake)} €`:""}</div></div>`).join("");return `<article class="card"><div class="top"><span class="badge covered">🔵 RESULTADO CUBIERTO</span><div class="metric">+${n(x.profit)}%</div></div><div class="event">${esc(ev(x))}</div><div class="meta">${esc(x.league||x.sport||"")}</div><div class="market"><b>${esc(x.market||"Mercado")}</b>${legs}</div><div class="msg">${esc(x.message)}</div></article>`}
+async function load(){cards.innerHTML='<div class="empty">Buscando oportunidades…</div>';try{let r=await fetch(`/api/opportunities?sport=${encodeURIComponent(sport)}&mode=${encodeURIComponent(mode)}`,{cache:"no-store"}),d=await r.json(),items=d.items||[];cards.innerHTML=items.length?items.map(x=>x.type==="covered"?covered(x):better(x)).join(""):'<div class="empty">Ahora mismo no hemos encontrado oportunidades con estos filtros.<br><br>Prueba a actualizar dentro de unos minutos.</div>'}catch(e){cards.innerHTML=`<div class="empty">No se ha podido consultar el radar.<br>${esc(e.message)}</div>`}}
+async function st(){try{let r=await fetch("/api/status"),s=await r.json();statusEl.textContent=s.ok?`● Conectado · ${s.bookmakers.join(" + ")}`:`● ${s.message}`;if(s.ok)statusEl.classList.add("ok")}catch(e){statusEl.textContent="● Sin conexión"}}
+document.querySelectorAll("[data-sport]").forEach(b=>b.onclick=()=>{document.querySelectorAll("[data-sport]").forEach(x=>x.classList.remove("active"));b.classList.add("active");sport=b.dataset.sport;load()});
+document.querySelectorAll("[data-mode]").forEach(b=>b.onclick=()=>{document.querySelectorAll("[data-mode]").forEach(x=>x.classList.remove("active"));b.classList.add("active");mode=b.dataset.mode;load()});
+document.getElementById("refresh").onclick=load;st();load();
+</script>
+</body></html>"""
 
 def api_key():
     return os.getenv("ODDS_API_KEY", "").strip()
 
 def odds_get(path, params=None):
-    key = api_key()
-    if not key:
-        raise RuntimeError("Falta ODDS_API_KEY en el servidor.")
-    params = dict(params or {})
-    params["apiKey"] = key
-    r = requests.get(f"{API_BASE}{path}", params=params, timeout=15)
+    if not api_key():
+        raise RuntimeError("Falta ODDS_API_KEY")
+    p = dict(params or {})
+    p["apiKey"] = api_key()
+    r = requests.get(f"{API_BASE}{path}", params=p, timeout=15)
     r.raise_for_status()
     return r.json()
 
 def nice_value(item):
-    event = item.get("event") or {}
-    market = item.get("market") or {}
-    bookmaker_odds = item.get("bookmakerOdds") or {}
-    side = (item.get("betSide") or "").lower()
-
-    # Odds field can vary by side.
-    odd = bookmaker_odds.get(side)
-    if odd is None:
-        if side == "home":
-            odd = bookmaker_odds.get("home")
-        elif side == "away":
-            odd = bookmaker_odds.get("away")
-        elif side == "draw":
-            odd = bookmaker_odds.get("draw")
-
-    try:
-        ev = float(item.get("expectedValue", 0))
-    except Exception:
-        ev = 0.0
-
-    return {
-        "type": "better_price",
-        "sport": event.get("sport", ""),
-        "league": event.get("league", ""),
-        "home": event.get("home", ""),
-        "away": event.get("away", ""),
-        "date": event.get("date", ""),
-        "bookmaker": item.get("bookmaker", ""),
-        "selection": item.get("betSide", ""),
-        "market": market.get("name", market.get("label", "Mercado")),
-        "line": market.get("hdp"),
-        "odds": odd,
-        "advantage": round(ev, 2),
-        "updated": item.get("expectedValueUpdatedAt", ""),
-        "link": bookmaker_odds.get(f"{side}DirectLink") or bookmaker_odds.get("href") or "",
-        "message": f"{item.get('bookmaker','Esta casa')} está pagando mejor de lo normal en esta opción."
-    }
+    event=item.get("event") or {}; market=item.get("market") or {}; bo=item.get("bookmakerOdds") or {}
+    side=(item.get("betSide") or "").lower()
+    odd=bo.get(side)
+    try: adv=float(item.get("expectedValue",0))
+    except: adv=0
+    return {"type":"better_price","sport":event.get("sport",""),"league":event.get("league",""),"home":event.get("home",""),"away":event.get("away",""),"bookmaker":item.get("bookmaker",""),"selection":item.get("betSide",""),"market":market.get("name",market.get("label","Mercado")),"odds":odd,"advantage":round(adv,2),"message":f"{item.get('bookmaker','Esta casa')} está pagando mejor de lo normal en esta opción."}
 
 def nice_arb(item):
-    event = item.get("event") or {}
-    legs = item.get("legs") or []
-    stakes = item.get("optimalStakes") or []
-    stake_map = {(s.get("bookmaker"), s.get("side")): s for s in stakes}
-
-    parts = []
-    for leg in legs:
-        key = (leg.get("bookmaker"), leg.get("side"))
-        s = stake_map.get(key, {})
-        parts.append({
-            "bookmaker": leg.get("bookmaker", ""),
-            "selection": leg.get("label") or leg.get("side") or "",
-            "odds": leg.get("odds"),
-            "stake": s.get("stake"),
-            "potential_return": s.get("potentialReturn"),
-            "link": leg.get("directLink") or leg.get("href") or ""
-        })
-
-    try:
-        margin = float(item.get("profitMargin", 0))
-    except Exception:
-        margin = 0.0
-
-    return {
-        "type": "covered",
-        "sport": event.get("sport", ""),
-        "league": event.get("league", ""),
-        "home": event.get("home", ""),
-        "away": event.get("away", ""),
-        "date": event.get("date", ""),
-        "market": (item.get("market") or {}).get("label") or (item.get("market") or {}).get("name") or "Mercado",
-        "profit": round(margin, 2),
-        "total_stake": item.get("totalStake"),
-        "legs": parts,
-        "updated": item.get("updatedAt", ""),
-        "message": "Si puedes colocar todas las apuestas a estas cuotas, el resultado queda cubierto."
-    }
+    event=item.get("event") or {}; legs=[]
+    for leg in item.get("legs") or []:
+        legs.append({"bookmaker":leg.get("bookmaker",""),"selection":leg.get("label") or leg.get("side") or "","odds":leg.get("odds"),"stake":None})
+    try: profit=float(item.get("profitMargin",0))
+    except: profit=0
+    return {"type":"covered","sport":event.get("sport",""),"league":event.get("league",""),"home":event.get("home",""),"away":event.get("away",""),"market":(item.get("market") or {}).get("label") or (item.get("market") or {}).get("name") or "Mercado","profit":round(profit,2),"legs":legs,"message":"Si puedes colocar todas las apuestas a estas cuotas, el resultado queda cubierto."}
 
 @app.route("/")
 def index():
-    return render_template("index.html", bookmakers=BOOKMAKERS, sports=SPORTS)
+    return Response(HTML, mimetype="text/html")
 
 @app.route("/api/status")
 def status():
-    return jsonify({
-        "ok": bool(api_key()),
-        "bookmakers": BOOKMAKERS,
-        "message": "Conectado" if api_key() else "Falta configurar la API Key en el servidor"
-    })
+    return jsonify({"ok":bool(api_key()),"bookmakers":BOOKMAKERS,"message":"Conectado" if api_key() else "Falta configurar la API Key en Render"})
 
 @app.route("/api/opportunities")
 def opportunities():
-    sport = request.args.get("sport", "all")
-    mode = request.args.get("mode", "all")
-    out = []
-    errors = []
-
-    if mode in ("all", "better"):
+    sport=request.args.get("sport","all"); mode=request.args.get("mode","all"); out=[]; errors=[]
+    if mode in ("all","better"):
         for bookmaker in BOOKMAKERS:
-            params = {"bookmaker": bookmaker, "includeEventDetails": "true"}
-            if sport != "all":
-                params["sport"] = sport
+            params={"bookmaker":bookmaker,"includeEventDetails":"true"}
+            if sport!="all": params["sport"]=sport
             try:
-                data = odds_get("/value-bets", params)
-                if isinstance(data, list):
-                    out.extend(nice_value(x) for x in data)
-            except Exception as e:
-                errors.append(f"{bookmaker}: {e}")
-
-    if mode in ("all", "covered"):
-        params = {
-            "bookmakers": ",".join(BOOKMAKERS),
-            "includeEventDetails": "true",
-            "limit": 100
-        }
+                data=odds_get("/value-bets",params)
+                if isinstance(data,list): out.extend(nice_value(x) for x in data)
+            except Exception as e: errors.append(f"{bookmaker}: {e}")
+    if mode in ("all","covered"):
         try:
-            data = odds_get("/arbitrage-bets", params)
-            if isinstance(data, list):
-                arbs = [nice_arb(x) for x in data]
-                if sport != "all":
-                    arbs = [x for x in arbs if (x.get("sport") or "").lower() == sport]
+            data=odds_get("/arbitrage-bets",{"bookmakers":",".join(BOOKMAKERS),"includeEventDetails":"true","limit":100})
+            if isinstance(data,list):
+                arbs=[nice_arb(x) for x in data]
+                if sport!="all": arbs=[x for x in arbs if (x.get("sport") or "").lower()==sport]
                 out.extend(arbs)
-        except Exception as e:
-            errors.append(f"Arbitraje: {e}")
+        except Exception as e: errors.append(f"Arbitraje: {e}")
+    out.sort(key=lambda x:x.get("profit",x.get("advantage",0)) or 0, reverse=True)
+    return jsonify({"items":out[:120],"errors":errors})
 
-    # Highest apparent opportunity first.
-    def score(x):
-        return x.get("profit", x.get("advantage", 0)) or 0
-    out.sort(key=score, reverse=True)
-
-    return jsonify({"items": out[:120], "errors": errors})
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+if __name__=="__main__":
+    app.run(host="0.0.0.0",port=int(os.getenv("PORT","8000")))
