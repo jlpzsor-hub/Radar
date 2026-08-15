@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: radar-privado-v0
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: ODDS_API_KEY
+        sync: false

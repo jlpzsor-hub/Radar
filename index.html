@@ -1,0 +1,50 @@
+
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0b1220">
+  <title>Radar</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <div class="eyebrow">RADAR PRIVADO · V0</div>
+        <h1>Encuentra dónde pagan mejor.</h1>
+        <p>Bet365 + William Hill · Fútbol · Tenis · Baloncesto</p>
+      </div>
+      <button id="refresh" class="refresh">Actualizar</button>
+    </header>
+
+    <section class="status" id="status">Comprobando conexión…</section>
+
+    <div class="filters">
+      <button class="chip active" data-sport="all">Todo</button>
+      <button class="chip" data-sport="football">⚽ Fútbol</button>
+      <button class="chip" data-sport="tennis">🎾 Tenis</button>
+      <button class="chip" data-sport="basketball">🏀 Basket</button>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-mode="all">Todas</button>
+      <button class="tab" data-mode="better">Pagan más</button>
+      <button class="tab" data-mode="covered">Ganancia cubierta</button>
+    </div>
+
+    <main id="cards">
+      <div class="empty">Cargando oportunidades…</div>
+    </main>
+
+    <footer>
+      <strong>V0 privada.</strong> Las cuotas pueden cambiar antes de confirmar una apuesta. Verifica siempre mercado, línea y precio en la casa.
+    </footer>
+  </div>
+<script src="/static/app.js"></script>
+</body>
+</html>
