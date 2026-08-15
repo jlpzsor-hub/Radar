@@ -33,10 +33,10 @@ h1{font-size:31px;line-height:1.03;margin:7px 0 8px}p{color:var(--muted);margin:
 .event{font-size:19px;font-weight:900;margin:13px 0 4px}.meta{font-size:12px;color:var(--muted)}
 .market{margin:14px 0;background:rgba(255,255,255,.05);border-radius:15px;padding:12px}.market-title{font-weight:900;margin-bottom:4px}.selection{color:#dbe3ee}
 .compare{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}
-.book{background:rgba(255,255,255,.05);border:1px solid transparent;border-radius:15px;padding:12px}
+.book{display:block;background:rgba(255,255,255,.05);border:1px solid transparent;border-radius:15px;padding:12px;color:inherit;text-decoration:none}.book.clickable{cursor:pointer}.book.disabled{opacity:.68}
 .book.best{border-color:#2d8c68;background:rgba(45,140,104,.12)}
 .book-name{font-size:12px;color:var(--muted);font-weight:800}.book-price{font-size:27px;font-weight:950;margin-top:5px}
-.best-label{font-size:10px;font-weight:900;color:#75efc1;margin-top:4px}
+.best-label{font-size:10px;font-weight:900;color:#75efc1;margin-top:4px}.open-label{font-size:10px;font-weight:900;color:#9cc7ff;margin-top:4px}.fresh{font-size:11px;color:#94a3b8;margin-top:10px}.checkbar{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-top:12px}.checkbtn{border:1px solid var(--line);background:#0f1a2d;color:#fff;border-radius:12px;padding:9px 11px;font-weight:800;font-size:12px}
 .msg{font-size:14px;line-height:1.45;color:#dbe3ee}
 .secondary{font-size:12px;color:var(--muted);margin-top:8px}
 .leg{background:rgba(255,255,255,.05);border-radius:14px;padding:11px;display:flex;justify-content:space-between;margin-top:8px}
@@ -48,7 +48,7 @@ footer{font-size:11px;color:#718096;line-height:1.5;padding:25px 4px}
 <div class="shell">
 <header>
 <div>
-<div class="eyebrow">RADAR PRIVADO · V0.2</div>
+<div class="eyebrow">RADAR PRIVADO · V0.4</div>
 <h1>Encuentra dónde pagan mejor.</h1>
 <p>Bet365 + William Hill · Fútbol · Tenis · Baloncesto</p>
 </div>
@@ -72,7 +72,7 @@ footer{font-size:11px;color:#718096;line-height:1.5;padding:25px 4px}
 
 <main id="cards"><div class="empty">Cargando oportunidades…</div></main>
 
-<footer><b>V0.2 privada.</b> Las cuotas cambian. Verifica siempre partido, selección, mercado y precio antes de confirmar.</footer>
+<footer><b>V0.4 privada.</b> Las cuotas cambian. Verifica siempre partido, selección, mercado y precio antes de confirmar.</footer>
 </div>
 
 <script>
@@ -84,21 +84,27 @@ const n=x=>Number.isFinite(Number(x))?Number(x).toFixed(2):(x??"—");
 const ev=x=>[x.home,x.away].filter(Boolean).join(" – ")||"Evento";
 
 function better(x){
-  const warn = Number(x.price_gap||0) >= 25;
+  const gap = Number(x.price_gap||0);
+  const warn = gap >= 25;
   const badgeClass = warn ? "review" : "better";
   const badgeText = warn ? "🟠 REVISAR DIFERENCIA" : "🟢 PAGAN MEJOR AQUÍ";
 
-  const books = (x.prices||[]).map(b=>`
-    <div class="book ${b.best?"best":""}">
+  const books = (x.prices||[]).map(b=>{
+    const hasLink = !!b.link;
+    const inner = `
       <div class="book-name">${esc(b.bookmaker)}</div>
       <div class="book-price">@ ${esc(b.odds ?? "—")}</div>
       ${b.best?'<div class="best-label">MEJOR CUOTA</div>':''}
-    </div>`).join("");
+      ${hasLink?'<div class="open-label">ABRIR EN LA CASA ↗</div>':'<div class="open-label">ENLACE NO DISPONIBLE</div>'}`;
+    return hasLink
+      ? `<a class="book clickable ${b.best?"best":""}" href="${esc(b.link)}" target="_blank" rel="noopener noreferrer">${inner}</a>`
+      : `<div class="book disabled ${b.best?"best":""}">${inner}</div>`;
+  }).join("");
 
   return `<article class="card">
     <div class="top">
       <span class="badge ${badgeClass}">${badgeText}</span>
-      <div class="metric">+${n(x.price_gap)}%<small>diferencia de cuota</small></div>
+      <div class="metric">+${n(x.price_gap)}%<small>paga más</small></div>
     </div>
     <div class="event">${esc(ev(x))}</div>
     <div class="meta">${esc(x.league||x.sport||"")}</div>
@@ -110,15 +116,20 @@ function better(x){
     </div>
 
     <div class="msg">${esc(x.message)}</div>
-    <div class="secondary">Señal estadística del proveedor: +${n(x.provider_advantage)}%</div>
+    <div class="fresh" data-ts="${esc(x.updated_at||"")}">Actualizado recientemente</div>
+    <div class="checkbar">
+      <span class="secondary">Señal interna: +${n(x.provider_advantage)}%</span>
+      <button class="checkbtn" onclick="event.stopPropagation();load()">Comprobar ahora</button>
+    </div>
   </article>`;
 }
-
 function covered(x){
-  let legs=(x.legs||[]).map(l=>`<div class="leg">
-    <div><b>${esc(l.bookmaker)}</b><br>${esc(l.selection)}</div>
-    <div style="text-align:right"><b>@ ${esc(l.odds||"—")}</b>${l.stake!=null?`<br>${n(l.stake)} €`:""}</div>
-  </div>`).join("");
+  let legs=(x.legs||[]).map(l=>{
+    const content=`<div><b>${esc(l.bookmaker)}</b><br>${esc(l.selection)}</div><div style="text-align:right"><b>@ ${esc(l.odds||"—")}</b>${l.stake!=null?`<br>${n(l.stake)} €`:""}${l.link?'<br><span class="open-label">ABRIR ↗</span>':''}</div>`;
+    return l.link
+      ? `<a class="leg" style="color:inherit;text-decoration:none" href="${esc(l.link)}" target="_blank" rel="noopener noreferrer">${content}</a>`
+      : `<div class="leg">${content}</div>`;
+  }).join("");
 
   return `<article class="card">
     <div class="top">
@@ -129,8 +140,23 @@ function covered(x){
     <div class="meta">${esc(x.league||x.sport||"")}</div>
     <div class="market"><div class="market-title">${esc(x.market_label||x.market||"Mercado")}</div>${legs}</div>
     <div class="msg">${esc(x.message)}</div>
+    <div class="fresh" data-ts="${esc(x.updated_at||"")}">Actualizado recientemente</div>
   </article>`;
 }
+
+function updateFreshness(){
+  document.querySelectorAll(".fresh[data-ts]").forEach(el=>{
+    const raw=el.dataset.ts;
+    if(!raw){el.textContent="Actualizado recientemente";return;}
+    const t=Date.parse(raw);
+    if(!Number.isFinite(t)){el.textContent="Actualizado recientemente";return;}
+    const sec=Math.max(0,Math.floor((Date.now()-t)/1000));
+    if(sec<60) el.textContent=`Actualizado hace ${sec} s`;
+    else if(sec<3600) el.textContent=`Actualizado hace ${Math.floor(sec/60)} min`;
+    else el.textContent=`Actualizado hace ${Math.floor(sec/3600)} h`;
+  });
+}
+setInterval(updateFreshness,10000);
 
 async function load(){
   cards.innerHTML='<div class="empty">Buscando oportunidades…</div>';
@@ -141,6 +167,7 @@ async function load(){
     cards.innerHTML=items.length
       ? items.map(x=>x.type==="covered"?covered(x):better(x)).join("")
       : '<div class="empty">Ahora mismo no hemos encontrado oportunidades con estos filtros.<br><br>Prueba a actualizar dentro de unos minutos.</div>';
+    updateFreshness();
   }catch(e){
     cards.innerHTML=`<div class="empty">No se ha podido consultar el radar.<br>${esc(e.message)}</div>`;
   }
@@ -196,23 +223,76 @@ def ev_to_advantage(raw_ev):
     if raw is None: return 0.0
     return round(raw - 100, 2) if raw >= 100 else round(raw, 2)
 
-def human_market(name, sport, hdp=None):
+def canonical_market_name(name):
     n = (name or "").strip().lower()
-    if n == "ml":
+    if n in {"ml", "moneyline", "match winner", "winner"}:
+        return "ml"
+    if "total" in n or "over/under" in n or "o/u" in n:
+        return "totals"
+    if "spread" in n or "handicap" in n or "hcp" in n:
+        return "handicap"
+    if "both teams" in n or "btts" in n:
+        return "btts"
+    if "draw no bet" in n or "dnb" in n:
+        return "dnb"
+    return n
+
+def human_market(name, sport, hdp=None):
+    c = canonical_market_name(name)
+    if c == "ml":
         return "Ganador del partido"
-    if "spread" in n or "handicap" in n:
+    if c == "handicap":
         return "Hándicap"
-    if "total" in n:
+    if c == "totals":
         unit = "goles" if sport == "football" else ("juegos" if sport == "tennis" else "puntos")
         return f"Total de {unit}"
-    if "both teams" in n:
+    if c == "btts":
         return "Marcan ambos equipos"
-    if "draw no bet" in n:
+    if c == "dnb":
         return "Empate no cuenta"
     return name or "Mercado"
 
-def human_selection(side, home, away, market_name="", hdp=None):
+def side_label_from_market(market, side):
+    """Use the API's own market label first. This matters for Totals/Handicaps,
+    where 'home'/'away' can mean Over/Under or the two handicap sides."""
     s = (side or "").strip().lower()
+    value = market.get(s)
+    if value not in (None, ""):
+        return str(value)
+    return ""
+
+def human_selection(side, home, away, market_name="", hdp=None, market=None):
+    s = (side or "").strip().lower()
+    market = market or {}
+
+    # First trust the label returned by the market object.
+    raw_label = side_label_from_market(market, s).strip()
+    if raw_label:
+        # Make common labels friendlier.
+        low = raw_label.lower()
+        if low in {"over", "o"}:
+            return f"Más de {hdp}" if hdp is not None else "Más de"
+        if low in {"under", "u"}:
+            return f"Menos de {hdp}" if hdp is not None else "Menos de"
+        if low == "draw":
+            return "Empate"
+        return raw_label
+
+    c = canonical_market_name(market_name)
+    if c == "ml":
+        if s == "home":
+            return home or "Local"
+        if s == "away":
+            return away or "Visitante"
+        if s == "draw":
+            return "Empate"
+
+    if c == "totals":
+        if s in {"home", "over"}:
+            return f"Más de {hdp}" if hdp is not None else "Más de"
+        if s in {"away", "under"}:
+            return f"Menos de {hdp}" if hdp is not None else "Menos de"
+
     if s == "home":
         return home or "Local"
     if s == "away":
@@ -226,29 +306,35 @@ def human_selection(side, home, away, market_name="", hdp=None):
     return side or ""
 
 def market_matches(market, target_name, target_hdp):
-    if (market.get("name") or "").strip().lower() != (target_name or "").strip().lower():
+    if canonical_market_name(market.get("name")) != canonical_market_name(target_name):
         return False
-    if target_hdp is None:
-        return True
-    # hdp can live on market or odds row
+
+    # Match the exact line whenever a line exists.
     mh = market.get("hdp")
-    if mh is None:
-        return True
+    if target_hdp is None or mh is None:
+        return target_hdp is None or mh is None or str(mh) == str(target_hdp)
     try:
         return abs(float(mh) - float(target_hdp)) < 1e-9
     except:
         return str(mh) == str(target_hdp)
 
-def extract_book_price(event_odds, bookmaker, market_name, side, target_hdp=None):
+def extract_book_offer(event_odds, bookmaker, market_name, side, target_hdp=None, target_market=None):
     bookmakers = (event_odds or {}).get("bookmakers") or {}
     markets = bookmakers.get(bookmaker) or []
     side_key = (side or "").lower()
+    target_market = target_market or {}
+
+    # The value endpoint can call the two sides "home/away" even when the
+    # displayed labels are Over/Under. We therefore match by BOTH side key
+    # and the API's market label.
+    target_label = side_label_from_market(target_market, side_key).strip().lower()
 
     for market in markets:
         if not market_matches(market, market_name, target_hdp):
             continue
+
+        market_href = market.get("href") or market.get("directLink") or ""
         for row in market.get("odds") or []:
-            # if hdp exists on row, require exact line
             row_hdp = row.get("hdp")
             if target_hdp is not None and row_hdp is not None:
                 try:
@@ -257,11 +343,36 @@ def extract_book_price(event_odds, bookmaker, market_name, side, target_hdp=None
                 except:
                     if str(row_hdp) != str(target_hdp):
                         continue
+
+            # First attempt: standard side key.
             val = row.get(side_key)
+
+            # Second attempt: infer side from market label, useful for totals.
+            if val is None and target_label:
+                for candidate in ("home", "away", "draw", "over", "under"):
+                    label = str(market.get(candidate, "")).strip().lower()
+                    if label and label == target_label:
+                        val = row.get(candidate)
+                        if val is not None:
+                            side_key_for_link = candidate
+                            break
+                else:
+                    side_key_for_link = side_key
+            else:
+                side_key_for_link = side_key
+
             f = to_float(val)
             if f is not None:
-                return f
-    return None
+                link = (
+                    row.get(f"{side_key_for_link}DirectLink")
+                    or row.get("directLink")
+                    or row.get("href")
+                    or market_href
+                    or ""
+                )
+                return {"odds": f, "link": link}
+
+    return {"odds": None, "link": ""}
 
 def batch_event_odds(event_ids):
     result = {}
@@ -303,35 +414,51 @@ def raw_value(item):
         "bookmaker": item.get("bookmaker", ""),
         "selection": item.get("betSide", ""),
         "market": market.get("name", "Mercado"),
+        "market_obj": market,
         "hdp": market.get("hdp"),
         "value_odds": odd,
         "provider_advantage": ev_to_advantage(item.get("expectedValue", 0)),
+        "updated_at": item.get("expectedValueUpdatedAt", ""),
+        "value_link": (
+            bo.get(f"{side}DirectLink")
+            or bo.get("directLink")
+            or bo.get("href")
+            or ""
+        ),
     }
 
 def enrich_value(v, event_odds):
-    prices = {}
+    offers = {}
     for b in BOOKMAKERS:
-        p = extract_book_price(
+        offer = extract_book_offer(
             event_odds,
             b,
             v["market"],
             v["selection"],
-            v["hdp"]
+            v["hdp"],
+            v.get("market_obj") or {}
         )
-        if p is not None:
-            prices[b] = p
+        if offer["odds"] is not None:
+            offers[b] = offer
 
-    # fall back to value endpoint's quoted price
+    # fall back to value endpoint's quoted price/direct link
     if v["bookmaker"] and v["value_odds"] is not None:
-        prices.setdefault(v["bookmaker"], v["value_odds"])
+        offers.setdefault(v["bookmaker"], {
+            "odds": v["value_odds"],
+            "link": v.get("value_link", "")
+        })
+        if not offers[v["bookmaker"]].get("link") and v.get("value_link"):
+            offers[v["bookmaker"]]["link"] = v["value_link"]
 
-    if not prices:
+    # This screen is a comparison product: do not show a "better price"
+    # unless BOTH selected bookmakers have the exact same market/line/side.
+    if any(b not in offers or offers[b].get("odds") is None for b in BOOKMAKERS):
         return None
 
-    best_book = max(prices, key=prices.get)
-    best_odds = prices[best_book]
+    best_book = max(offers, key=lambda b: offers[b]["odds"])
+    best_odds = offers[best_book]["odds"]
 
-    other_candidates = [p for b,p in prices.items() if b != best_book]
+    other_candidates = [o["odds"] for b,o in offers.items() if b != best_book]
     other_odds = max(other_candidates) if other_candidates else None
 
     gap = 0.0
@@ -340,15 +467,17 @@ def enrich_value(v, event_odds):
 
     price_rows = []
     for b in BOOKMAKERS:
+        offer = offers.get(b, {})
         price_rows.append({
             "bookmaker": b,
-            "odds": prices.get(b),
+            "odds": offer.get("odds"),
+            "link": offer.get("link", ""),
             "best": b == best_book
         })
 
     market_label = human_market(v["market"], v["sport"], v["hdp"])
     selection_label = human_selection(
-        v["selection"], v["home"], v["away"], v["market"], v["hdp"]
+        v["selection"], v["home"], v["away"], v["market"], v["hdp"], v.get("market_obj") or {}
     )
 
     msg = (
@@ -369,6 +498,7 @@ def enrich_value(v, event_odds):
         "prices": price_rows,
         "price_gap": gap,
         "provider_advantage": v["provider_advantage"],
+        "updated_at": v.get("updated_at", ""),
         "message": msg
     }
 
@@ -382,7 +512,8 @@ def nice_arb(item):
             "bookmaker": leg.get("bookmaker", ""),
             "selection": human_selection(side, event.get("home",""), event.get("away","")),
             "odds": leg.get("odds"),
-            "stake": None
+            "stake": None,
+            "link": leg.get("directLink") or leg.get("href") or ""
         })
     try: profit = float(item.get("profitMargin", 0))
     except: profit = 0.0
@@ -397,6 +528,7 @@ def nice_arb(item):
         "market_label": human_market(market, sport),
         "profit": round(profit, 2),
         "legs": legs,
+        "updated_at": item.get("updatedAt", ""),
         "message": "Si puedes colocar todas las apuestas a estas cuotas, el resultado queda cubierto."
     }
 
