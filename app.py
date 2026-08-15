@@ -1,5 +1,6 @@
 
 import os
+import math
 import requests
 from flask import Flask, jsonify, request, Response
 
@@ -27,10 +28,19 @@ h1{font-size:31px;line-height:1.03;margin:7px 0 8px}p{color:var(--muted);margin:
 .status{margin:20px 0 12px;padding:11px 13px;border:1px solid var(--line);border-radius:14px;color:var(--muted);font-size:13px}.ok{color:#b7f7df}
 .row{display:flex;gap:8px;overflow:auto;padding:5px 0}.chip{white-space:nowrap;border:1px solid var(--line);background:#121c2f;color:#cbd5e1;border-radius:999px;padding:10px 13px;font-weight:800}.chip.active{background:white;color:#0b1220}
 #cards{display:grid;gap:12px;margin-top:12px}.card{background:linear-gradient(180deg,#182640,#121c2f);border:1px solid var(--line);border-radius:22px;padding:17px}
-.top{display:flex;justify-content:space-between;gap:12px;align-items:center}.badge{font-size:12px;font-weight:900;padding:7px 9px;border-radius:999px}.better{background:#123c32;color:#75efc1}.covered{background:#17355d;color:#a6cbff}
-.metric{font-size:21px;font-weight:900}.event{font-size:19px;font-weight:900;margin:13px 0 4px}.meta{font-size:12px;color:var(--muted)}
-.market{margin:14px 0;background:rgba(255,255,255,.05);border-radius:15px;padding:12px}.price{font-size:26px;font-weight:900;margin-top:7px}.msg{font-size:14px;line-height:1.45;color:#dbe3ee}
-.leg{background:rgba(255,255,255,.05);border-radius:14px;padding:11px;display:flex;justify-content:space-between;margin-top:8px}.empty{text-align:center;color:var(--muted);padding:40px 15px}
+.top{display:flex;justify-content:space-between;gap:12px;align-items:center}.badge{font-size:12px;font-weight:900;padding:7px 9px;border-radius:999px}.better{background:#123c32;color:#75efc1}.covered{background:#17355d;color:#a6cbff}.review{background:#4b3410;color:#ffd68a}
+.metric{font-size:21px;font-weight:900}.metric small{display:block;color:var(--muted);font-size:10px;text-align:right}
+.event{font-size:19px;font-weight:900;margin:13px 0 4px}.meta{font-size:12px;color:var(--muted)}
+.market{margin:14px 0;background:rgba(255,255,255,.05);border-radius:15px;padding:12px}.market-title{font-weight:900;margin-bottom:4px}.selection{color:#dbe3ee}
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}
+.book{background:rgba(255,255,255,.05);border:1px solid transparent;border-radius:15px;padding:12px}
+.book.best{border-color:#2d8c68;background:rgba(45,140,104,.12)}
+.book-name{font-size:12px;color:var(--muted);font-weight:800}.book-price{font-size:27px;font-weight:950;margin-top:5px}
+.best-label{font-size:10px;font-weight:900;color:#75efc1;margin-top:4px}
+.msg{font-size:14px;line-height:1.45;color:#dbe3ee}
+.secondary{font-size:12px;color:var(--muted);margin-top:8px}
+.leg{background:rgba(255,255,255,.05);border-radius:14px;padding:11px;display:flex;justify-content:space-between;margin-top:8px}
+.empty{text-align:center;color:var(--muted);padding:40px 15px}
 footer{font-size:11px;color:#718096;line-height:1.5;padding:25px 4px}
 </style>
 </head>
@@ -38,7 +48,7 @@ footer{font-size:11px;color:#718096;line-height:1.5;padding:25px 4px}
 <div class="shell">
 <header>
 <div>
-<div class="eyebrow">RADAR PRIVADO · V0.1</div>
+<div class="eyebrow">RADAR PRIVADO · V0.2</div>
 <h1>Encuentra dónde pagan mejor.</h1>
 <p>Bet365 + William Hill · Fútbol · Tenis · Baloncesto</p>
 </div>
@@ -56,13 +66,13 @@ footer{font-size:11px;color:#718096;line-height:1.5;padding:25px 4px}
 
 <div class="row">
 <button class="chip mode active" data-mode="all">Todas</button>
-<button class="chip mode" data-mode="better">Pagan más</button>
+<button class="chip mode" data-mode="better">Mejor pagadas</button>
 <button class="chip mode" data-mode="covered">Ganancia cubierta</button>
 </div>
 
 <main id="cards"><div class="empty">Cargando oportunidades…</div></main>
 
-<footer><b>V0.1 privada.</b> Las cuotas cambian. Verifica siempre mercado, línea y precio antes de confirmar.</footer>
+<footer><b>V0.2 privada.</b> Las cuotas cambian. Verifica siempre partido, selección, mercado y precio antes de confirmar.</footer>
 </div>
 
 <script>
@@ -74,19 +84,33 @@ const n=x=>Number.isFinite(Number(x))?Number(x).toFixed(2):(x??"—");
 const ev=x=>[x.home,x.away].filter(Boolean).join(" – ")||"Evento";
 
 function better(x){
+  const warn = Number(x.price_gap||0) >= 25;
+  const badgeClass = warn ? "review" : "better";
+  const badgeText = warn ? "🟠 REVISAR DIFERENCIA" : "🟢 PAGAN MEJOR AQUÍ";
+
+  const books = (x.prices||[]).map(b=>`
+    <div class="book ${b.best?"best":""}">
+      <div class="book-name">${esc(b.bookmaker)}</div>
+      <div class="book-price">@ ${esc(b.odds ?? "—")}</div>
+      ${b.best?'<div class="best-label">MEJOR CUOTA</div>':''}
+    </div>`).join("");
+
   return `<article class="card">
     <div class="top">
-      <span class="badge better">🟢 ESTA CASA PAGA MÁS</span>
-      <div class="metric">+${n(x.advantage)}%</div>
+      <span class="badge ${badgeClass}">${badgeText}</span>
+      <div class="metric">+${n(x.price_gap)}%<small>diferencia de cuota</small></div>
     </div>
     <div class="event">${esc(ev(x))}</div>
     <div class="meta">${esc(x.league||x.sport||"")}</div>
+
     <div class="market">
-      <b>${esc(x.market||"Mercado")}</b>
-      <div>${esc(x.bookmaker)} · ${esc(x.selection)}</div>
-      <div class="price">@ ${esc(x.odds||"—")}</div>
+      <div class="market-title">${esc(x.market_label||x.market||"Mercado")}</div>
+      <div class="selection">${esc(x.selection_label||x.selection||"")}</div>
+      <div class="compare">${books}</div>
     </div>
+
     <div class="msg">${esc(x.message)}</div>
+    <div class="secondary">Señal estadística del proveedor: +${n(x.provider_advantage)}%</div>
   </article>`;
 }
 
@@ -99,11 +123,11 @@ function covered(x){
   return `<article class="card">
     <div class="top">
       <span class="badge covered">🔵 RESULTADO CUBIERTO</span>
-      <div class="metric">+${n(x.profit)}%</div>
+      <div class="metric">+${n(x.profit)}%<small>beneficio aprox.</small></div>
     </div>
     <div class="event">${esc(ev(x))}</div>
     <div class="meta">${esc(x.league||x.sport||"")}</div>
-    <div class="market"><b>${esc(x.market||"Mercado")}</b>${legs}</div>
+    <div class="market"><div class="market-title">${esc(x.market_label||x.market||"Mercado")}</div>${legs}</div>
     <div class="msg">${esc(x.message)}</div>
   </article>`;
 }
@@ -128,28 +152,19 @@ async function st(){
     let s=await r.json();
     statusEl.textContent=s.ok?`● Conectado · ${s.bookmakers.join(" + ")}`:`● ${s.message}`;
     if(s.ok)statusEl.classList.add("ok");
-  }catch(e){
-    statusEl.textContent="● Sin conexión";
-  }
+  }catch(e){ statusEl.textContent="● Sin conexión"; }
 }
 
 document.querySelectorAll("[data-sport]").forEach(b=>b.onclick=()=>{
   document.querySelectorAll("[data-sport]").forEach(x=>x.classList.remove("active"));
-  b.classList.add("active");
-  sport=b.dataset.sport;
-  load();
+  b.classList.add("active"); sport=b.dataset.sport; load();
 });
-
 document.querySelectorAll("[data-mode]").forEach(b=>b.onclick=()=>{
   document.querySelectorAll("[data-mode]").forEach(x=>x.classList.remove("active"));
-  b.classList.add("active");
-  mode=b.dataset.mode;
-  load();
+  b.classList.add("active"); mode=b.dataset.mode; load();
 });
-
 document.getElementById("refresh").onclick=load;
-st();
-load();
+st(); load();
 </script>
 </body>
 </html>
@@ -163,82 +178,223 @@ def odds_get(path, params=None):
         raise RuntimeError("Falta ODDS_API_KEY")
     p = dict(params or {})
     p["apiKey"] = api_key()
-    r = requests.get(f"{API_BASE}{path}", params=p, timeout=15)
+    r = requests.get(f"{API_BASE}{path}", params=p, timeout=20)
     r.raise_for_status()
     return r.json()
 
 def normalize_sport(value):
+    if isinstance(value, dict):
+        value = value.get("slug") or value.get("name")
     return (value or "").strip().lower()
 
-def ev_to_advantage(raw_ev):
-    """
-    Odds-API.io EV may arrive as 110.73 for +10.73%.
-    Convert to the user-facing advantage.
-    """
-    try:
-        raw = float(raw_ev)
-    except Exception:
-        return 0.0
-    if raw >= 100:
-        return round(raw - 100, 2)
-    return round(raw, 2)
+def to_float(x):
+    try: return float(x)
+    except: return None
 
-def nice_value(item):
+def ev_to_advantage(raw_ev):
+    raw = to_float(raw_ev)
+    if raw is None: return 0.0
+    return round(raw - 100, 2) if raw >= 100 else round(raw, 2)
+
+def human_market(name, sport, hdp=None):
+    n = (name or "").strip().lower()
+    if n == "ml":
+        return "Ganador del partido"
+    if "spread" in n or "handicap" in n:
+        return "Hándicap"
+    if "total" in n:
+        unit = "goles" if sport == "football" else ("juegos" if sport == "tennis" else "puntos")
+        return f"Total de {unit}"
+    if "both teams" in n:
+        return "Marcan ambos equipos"
+    if "draw no bet" in n:
+        return "Empate no cuenta"
+    return name or "Mercado"
+
+def human_selection(side, home, away, market_name="", hdp=None):
+    s = (side or "").strip().lower()
+    if s == "home":
+        return home or "Local"
+    if s == "away":
+        return away or "Visitante"
+    if s == "draw":
+        return "Empate"
+    if s == "over":
+        return f"Más de {hdp}" if hdp is not None else "Más de"
+    if s == "under":
+        return f"Menos de {hdp}" if hdp is not None else "Menos de"
+    return side or ""
+
+def market_matches(market, target_name, target_hdp):
+    if (market.get("name") or "").strip().lower() != (target_name or "").strip().lower():
+        return False
+    if target_hdp is None:
+        return True
+    # hdp can live on market or odds row
+    mh = market.get("hdp")
+    if mh is None:
+        return True
+    try:
+        return abs(float(mh) - float(target_hdp)) < 1e-9
+    except:
+        return str(mh) == str(target_hdp)
+
+def extract_book_price(event_odds, bookmaker, market_name, side, target_hdp=None):
+    bookmakers = (event_odds or {}).get("bookmakers") or {}
+    markets = bookmakers.get(bookmaker) or []
+    side_key = (side or "").lower()
+
+    for market in markets:
+        if not market_matches(market, market_name, target_hdp):
+            continue
+        for row in market.get("odds") or []:
+            # if hdp exists on row, require exact line
+            row_hdp = row.get("hdp")
+            if target_hdp is not None and row_hdp is not None:
+                try:
+                    if abs(float(row_hdp) - float(target_hdp)) > 1e-9:
+                        continue
+                except:
+                    if str(row_hdp) != str(target_hdp):
+                        continue
+            val = row.get(side_key)
+            f = to_float(val)
+            if f is not None:
+                return f
+    return None
+
+def batch_event_odds(event_ids):
+    result = {}
+    ids = [str(x) for x in event_ids if x is not None]
+    for i in range(0, len(ids), 10):
+        chunk = ids[i:i+10]
+        try:
+            data = odds_get("/odds/multi", {
+                "eventIds": ",".join(chunk),
+                "bookmakers": ",".join(BOOKMAKERS)
+            })
+            if isinstance(data, list):
+                for event in data:
+                    result[str(event.get("id"))] = event
+        except Exception:
+            pass
+    return result
+
+def raw_value(item):
     event = item.get("event") or {}
     market = item.get("market") or {}
     bo = item.get("bookmakerOdds") or {}
     side = (item.get("betSide") or "").lower()
-
-    odd = bo.get(side)
+    odd = to_float(bo.get(side))
     if odd is None:
-        odd = (
+        odd = to_float(
             bo.get("home") if side == "home"
             else bo.get("away") if side == "away"
             else bo.get("draw") if side == "draw"
             else None
         )
-
     sport = normalize_sport(event.get("sport"))
-
     return {
-        "type": "better_price",
+        "event_id": item.get("eventId"),
         "sport": sport,
         "league": event.get("league", ""),
         "home": event.get("home", ""),
         "away": event.get("away", ""),
         "bookmaker": item.get("bookmaker", ""),
         "selection": item.get("betSide", ""),
-        "market": market.get("name", market.get("label", "Mercado")),
-        "odds": odd,
-        "advantage": ev_to_advantage(item.get("expectedValue", 0)),
-        "message": f"{item.get('bookmaker','Esta casa')} está pagando mejor de lo normal en esta opción."
+        "market": market.get("name", "Mercado"),
+        "hdp": market.get("hdp"),
+        "value_odds": odd,
+        "provider_advantage": ev_to_advantage(item.get("expectedValue", 0)),
+    }
+
+def enrich_value(v, event_odds):
+    prices = {}
+    for b in BOOKMAKERS:
+        p = extract_book_price(
+            event_odds,
+            b,
+            v["market"],
+            v["selection"],
+            v["hdp"]
+        )
+        if p is not None:
+            prices[b] = p
+
+    # fall back to value endpoint's quoted price
+    if v["bookmaker"] and v["value_odds"] is not None:
+        prices.setdefault(v["bookmaker"], v["value_odds"])
+
+    if not prices:
+        return None
+
+    best_book = max(prices, key=prices.get)
+    best_odds = prices[best_book]
+
+    other_candidates = [p for b,p in prices.items() if b != best_book]
+    other_odds = max(other_candidates) if other_candidates else None
+
+    gap = 0.0
+    if other_odds and other_odds > 0:
+        gap = round((best_odds / other_odds - 1) * 100, 2)
+
+    price_rows = []
+    for b in BOOKMAKERS:
+        price_rows.append({
+            "bookmaker": b,
+            "odds": prices.get(b),
+            "best": b == best_book
+        })
+
+    market_label = human_market(v["market"], v["sport"], v["hdp"])
+    selection_label = human_selection(
+        v["selection"], v["home"], v["away"], v["market"], v["hdp"]
+    )
+
+    msg = (
+        f"{best_book} ofrece {best_odds:.2f}"
+        + (f" frente a {other_odds:.2f} en la otra casa." if other_odds else ".")
+    )
+
+    return {
+        "type": "better_price",
+        "sport": v["sport"],
+        "league": v["league"],
+        "home": v["home"],
+        "away": v["away"],
+        "market": v["market"],
+        "market_label": market_label,
+        "selection": v["selection"],
+        "selection_label": selection_label,
+        "prices": price_rows,
+        "price_gap": gap,
+        "provider_advantage": v["provider_advantage"],
+        "message": msg
     }
 
 def nice_arb(item):
     event = item.get("event") or {}
     sport = normalize_sport(event.get("sport"))
     legs = []
-
     for leg in item.get("legs") or []:
+        side = leg.get("label") or leg.get("side") or ""
         legs.append({
             "bookmaker": leg.get("bookmaker", ""),
-            "selection": leg.get("label") or leg.get("side") or "",
+            "selection": human_selection(side, event.get("home",""), event.get("away","")),
             "odds": leg.get("odds"),
             "stake": None
         })
-
-    try:
-        profit = float(item.get("profitMargin", 0))
-    except Exception:
-        profit = 0.0
-
+    try: profit = float(item.get("profitMargin", 0))
+    except: profit = 0.0
+    market = (item.get("market") or {}).get("label") or (item.get("market") or {}).get("name") or "Mercado"
     return {
         "type": "covered",
         "sport": sport,
         "league": event.get("league", ""),
         "home": event.get("home", ""),
         "away": event.get("away", ""),
-        "market": (item.get("market") or {}).get("label") or (item.get("market") or {}).get("name") or "Mercado",
+        "market": market,
+        "market_label": human_market(market, sport),
         "profit": round(profit, 2),
         "legs": legs,
         "message": "Si puedes colocar todas las apuestas a estas cuotas, el resultado queda cubierto."
@@ -260,13 +416,13 @@ def status():
 def opportunities():
     sport = normalize_sport(request.args.get("sport", "all"))
     mode = request.args.get("mode", "all")
-    out = []
-    errors = []
+    out, errors = [], []
 
     requested_sports = list(ALLOWED_SPORTS) if sport == "all" else [sport]
     requested_sports = [s for s in requested_sports if s in ALLOWED_SPORTS]
 
     if mode in ("all", "better"):
+        raw = []
         for bookmaker in BOOKMAKERS:
             for sport_slug in requested_sports:
                 try:
@@ -277,11 +433,31 @@ def opportunities():
                     })
                     if isinstance(data, list):
                         for item in data:
-                            nice = nice_value(item)
-                            if nice["sport"] in ALLOWED_SPORTS:
-                                out.append(nice)
+                            v = raw_value(item)
+                            if v["sport"] in ALLOWED_SPORTS:
+                                raw.append(v)
                 except Exception as e:
                     errors.append(f"{bookmaker}/{sport_slug}: {e}")
+
+        # dedupe same event/market/line/selection, keeping strongest provider signal
+        dedup = {}
+        for v in raw:
+            key = (v["event_id"], v["market"], str(v["hdp"]), v["selection"])
+            if key not in dedup or v["provider_advantage"] > dedup[key]["provider_advantage"]:
+                dedup[key] = v
+
+        candidates = sorted(
+            dedup.values(),
+            key=lambda x: x["provider_advantage"],
+            reverse=True
+        )[:30]
+
+        odds_map = batch_event_odds([x["event_id"] for x in candidates])
+
+        for v in candidates:
+            enriched = enrich_value(v, odds_map.get(str(v["event_id"]), {}))
+            if enriched:
+                out.append(enriched)
 
     if mode in ("all", "covered"):
         try:
@@ -290,25 +466,23 @@ def opportunities():
                 "includeEventDetails": "true",
                 "limit": 100
             })
-
             if isinstance(data, list):
                 for item in data:
-                    nice = nice_arb(item)
-                    if nice["sport"] not in ALLOWED_SPORTS:
+                    x = nice_arb(item)
+                    if x["sport"] not in ALLOWED_SPORTS:
                         continue
-                    if sport != "all" and nice["sport"] != sport:
+                    if sport != "all" and x["sport"] != sport:
                         continue
-                    out.append(nice)
-
+                    out.append(x)
         except Exception as e:
             errors.append(f"Arbitraje: {e}")
 
     out.sort(
-        key=lambda x: x.get("profit", x.get("advantage", 0)) or 0,
+        key=lambda x: x.get("profit", x.get("price_gap", 0)) or 0,
         reverse=True
     )
 
-    return jsonify({"items": out[:120], "errors": errors})
+    return jsonify({"items": out[:60], "errors": errors})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
