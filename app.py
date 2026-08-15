@@ -27,9 +27,9 @@ HTML = r"""<!doctype html>
 body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .shell{max-width:720px;margin:auto;padding:0 0 40px}
 header{display:flex;justify-content:space-between;gap:12px;background:linear-gradient(180deg,var(--green2),var(--green));padding:calc(env(safe-area-inset-top) + 18px) 18px 18px;border-radius:0 0 28px 28px;color:white}.eyebrow{font-size:11px;font-weight:900;letter-spacing:.13em;color:#c8f0da}
-h1{font-size:28px;line-height:1.02;margin:7px 0 7px}p{color:var(--muted);margin:0}
+h1{font-size:27px;line-height:1.02;margin:6px 0 6px}p{color:var(--muted);margin:0}
 .refresh{border:0;border-radius:14px;background:#fff;color:var(--green);font-weight:900;padding:11px 13px;height:42px}
-.status{margin:18px 16px 10px;padding:11px 13px;border:1px solid #c8dfd1;border-radius:14px;color:#174d34;background:#edf7f1;font-size:13px;font-weight:700}.ok{color:#b7f7df}
+.status{margin:16px 16px 10px;padding:12px 14px;border:1px solid #b9d8c5;border-radius:14px;color:#0b5d38;background:#f8fffb;font-size:14px;font-weight:850}.ok{color:#b7f7df}
 .row{display:flex;gap:8px;overflow:auto;padding:5px 16px}.chip{white-space:nowrap;border:1px solid var(--line);background:#fff;color:#3b4940;border-radius:999px;padding:10px 13px;font-weight:800}.chip.active{background:var(--green);color:white;border-color:var(--green)}
 #cards{display:grid;gap:12px;margin:14px 16px 0}.card{background:var(--panel);border:1px solid var(--line);border-radius:22px;padding:17px;box-shadow:0 7px 22px rgba(31,55,42,.07)}
 .top{display:flex;justify-content:space-between;gap:12px;align-items:center}.badge{font-size:12px;font-weight:900;padding:7px 9px;border-radius:999px}.better{background:#123c32;color:#75efc1}.covered{background:#17355d;color:#a6cbff}.review{background:#4b3410;color:#ffd68a}.single{background:#252d3e;color:#d7deea}
@@ -51,14 +51,14 @@ footer{font-size:11px;color:#7e8881;line-height:1.5;padding:25px 20px}
 <div class="shell">
 <header>
 <div>
-<div class="eyebrow">RADAR PRIVADO · V0.9</div>
+<div class="eyebrow">RADAR PRIVADO · V1.0</div>
 <h1>Encuentra tu oportunidad real.</h1>
 <p>Comparamos las casas por ti. Tú eliges.</p>
 </div>
 <button class="refresh" id="refresh">Actualizar</button>
 </header>
 
-<div id="status" class="status">Comprobando conexión…</div><div id="cacheInfo" style="margin:0 16px 8px;color:#6f7a72;font-size:12px">Datos guardados temporalmente para ahorrar consultas.</div>
+<div id="status" class="status">Comprobando conexión…</div><div id="cacheInfo" style="margin:4px 16px 10px;color:#56635a;font-size:12px;font-weight:650">Datos guardados temporalmente para ahorrar consultas.</div>
 
 <div class="row">
 <button class="chip active" data-sport="all">Todo</button>
@@ -67,7 +67,7 @@ footer{font-size:11px;color:#7e8881;line-height:1.5;padding:25px 20px}
 <button class="chip" data-sport="basketball">🏀 Basket</button>
 </div>
 
-<div class="mode-row">
+<div class="mode-row" style="margin-top:2px">
 <button class="chip mode active" data-mode="all">Oportunidades</button>
 <button class="chip mode" data-mode="better">Valor real entre casas</button>
 <button class="chip mode" data-mode="covered">Ganancia segura</button>
@@ -75,7 +75,7 @@ footer{font-size:11px;color:#7e8881;line-height:1.5;padding:25px 20px}
 
 <main id="cards"><div class="empty">Cargando oportunidades…</div></main>
 
-<footer><b>V0.9 privada.</b> Las cuotas cambian en tiempo real. Confirma siempre el precio antes de apostar.</footer>
+<footer><b>V1.0 privada.</b> Las cuotas cambian en tiempo real. Confirma siempre el precio antes de apostar.</footer>
 </div>
 
 <script>
