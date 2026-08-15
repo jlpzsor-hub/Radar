@@ -1,9 +1,13 @@
 
 import os
+import time
 import requests
 from flask import Flask, jsonify, request, Response
 
 app = Flask(__name__)
+
+CACHE_TTL = 300
+_RESPONSE_CACHE = {"ts": 0, "items": []}
 
 API_BASE = "https://api.odds-api.io/v3"
 BOOKMAKERS = ["Bet365", "William Hill"]
@@ -18,43 +22,43 @@ HTML = r"""<!doctype html>
 <meta name="theme-color" content="#0b1220">
 <title>Radar Privado</title>
 <style>
-:root{--bg:#0b1220;--panel:#142038;--line:#263957;--txt:#f8fafc;--muted:#94a3b8}
+:root{--bg:#f2efe8;--panel:#fffdf9;--line:#d8ded9;--txt:#17211b;--muted:#6f7a72;--green:#0b5d38;--green2:#0d6b41}
 *{box-sizing:border-box}
-body{margin:0;background:linear-gradient(180deg,#07101e,#0b1220);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-.shell{max-width:720px;margin:auto;padding:calc(env(safe-area-inset-top) + 18px) 16px 40px}
-header{display:flex;justify-content:space-between;gap:12px}.eyebrow{font-size:11px;font-weight:900;letter-spacing:.13em;color:#7dd3fc}
+body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.shell{max-width:720px;margin:auto;padding:0 0 40px}
+header{display:flex;justify-content:space-between;gap:12px;background:linear-gradient(180deg,var(--green2),var(--green));padding:calc(env(safe-area-inset-top) + 22px) 18px 24px;border-radius:0 0 28px 28px;color:white}.eyebrow{font-size:11px;font-weight:900;letter-spacing:.13em;color:#c8f0da}
 h1{font-size:31px;line-height:1.03;margin:7px 0 8px}p{color:var(--muted);margin:0}
-.refresh{border:0;border-radius:14px;background:#fff;color:#08111f;font-weight:900;padding:11px 13px;height:42px}
-.status{margin:20px 0 12px;padding:11px 13px;border:1px solid var(--line);border-radius:14px;color:var(--muted);font-size:13px}.ok{color:#b7f7df}
-.row{display:flex;gap:8px;overflow:auto;padding:5px 0}.chip{white-space:nowrap;border:1px solid var(--line);background:#121c2f;color:#cbd5e1;border-radius:999px;padding:10px 13px;font-weight:800}.chip.active{background:white;color:#0b1220}
-#cards{display:grid;gap:12px;margin-top:12px}.card{background:linear-gradient(180deg,#182640,#121c2f);border:1px solid var(--line);border-radius:22px;padding:17px}
+.refresh{border:0;border-radius:14px;background:#fff;color:var(--green);font-weight:900;padding:11px 13px;height:42px}
+.status{margin:18px 16px 12px;padding:11px 13px;border:1px solid #d1ddd5;border-radius:14px;color:#315943;background:#eef6f1;font-size:13px}.ok{color:#b7f7df}
+.row{display:flex;gap:8px;overflow:auto;padding:5px 16px}.chip{white-space:nowrap;border:1px solid var(--line);background:#fff;color:#3b4940;border-radius:999px;padding:10px 13px;font-weight:800}.chip.active{background:var(--green);color:white;border-color:var(--green)}
+#cards{display:grid;gap:12px;margin:14px 16px 0}.card{background:var(--panel);border:1px solid var(--line);border-radius:22px;padding:17px;box-shadow:0 7px 22px rgba(31,55,42,.07)}
 .top{display:flex;justify-content:space-between;gap:12px;align-items:center}.badge{font-size:12px;font-weight:900;padding:7px 9px;border-radius:999px}.better{background:#123c32;color:#75efc1}.covered{background:#17355d;color:#a6cbff}.review{background:#4b3410;color:#ffd68a}.single{background:#252d3e;color:#d7deea}
 .metric{font-size:21px;font-weight:900}.metric small{display:block;color:var(--muted);font-size:10px;text-align:right}
-.event{font-size:19px;font-weight:900;margin:13px 0 4px}.meta{font-size:12px;color:var(--muted)}
-.market{margin:14px 0;background:rgba(255,255,255,.05);border-radius:15px;padding:12px}.market-title{font-weight:900;margin-bottom:4px}.selection{color:#dbe3ee}
+.event{font-size:19px;font-weight:900;margin:13px 0 4px;color:#17211b}.meta{font-size:12px;color:var(--muted)}
+.market{margin:14px 0;background:#f5f7f4;border-radius:15px;padding:12px}.market-title{font-weight:900;margin-bottom:4px}.selection{color:#dbe3ee}
 .compare{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}
-.book{display:block;background:rgba(255,255,255,.05);border:1px solid transparent;border-radius:15px;padding:12px;color:inherit;text-decoration:none}
-.book.best{border-color:#2d8c68;background:rgba(45,140,104,.12)}.book.disabled{opacity:.62}
+.book{display:block;background:white;border:1px solid var(--line);border-radius:15px;padding:12px;color:inherit;text-decoration:none}
+.book.best{border:2px solid #2d8c68;background:#f3fbf7}.book.disabled{opacity:.62}
 .book-name{font-size:12px;color:var(--muted);font-weight:800}.book-price{font-size:27px;font-weight:950;margin-top:5px}
 .best-label{font-size:10px;font-weight:900;color:#75efc1;margin-top:4px}.open-label{font-size:10px;font-weight:900;color:#9cc7ff;margin-top:4px}
-.msg{font-size:14px;line-height:1.45;color:#dbe3ee}.fresh{font-size:11px;color:#94a3b8;margin-top:10px}
+.msg{font-size:14px;line-height:1.45;color:#465249}.fresh{font-size:11px;color:#94a3b8;margin-top:10px}
 .leg{background:rgba(255,255,255,.05);border-radius:14px;padding:11px;display:flex;justify-content:space-between;margin-top:8px}
 .empty{text-align:center;color:var(--muted);padding:40px 15px}
-footer{font-size:11px;color:#718096;line-height:1.5;padding:25px 4px}
+footer{font-size:11px;color:#7e8881;line-height:1.5;padding:25px 20px}
 </style>
 </head>
 <body>
 <div class="shell">
 <header>
 <div>
-<div class="eyebrow">RADAR PRIVADO · V0.7</div>
-<h1>Encuentra dónde pagan mejor.</h1>
-<p>Bet365 + William Hill · Fútbol · Tenis · Baloncesto</p>
+<div class="eyebrow">RADAR PRIVADO · V0.8</div>
+<h1>Encuentra tu oportunidad real.</h1>
+<p>Comparamos las casas por ti. Tú eliges.</p>
 </div>
 <button class="refresh" id="refresh">Actualizar</button>
 </header>
 
-<div id="status" class="status">Comprobando conexión…</div>
+<div id="status" class="status">Comprobando conexión…</div><div id="cacheInfo" style="margin:0 16px 8px;color:#6f7a72;font-size:12px">Datos guardados temporalmente para ahorrar consultas.</div>
 
 <div class="row">
 <button class="chip active" data-sport="all">Todo</button>
@@ -64,19 +68,19 @@ footer{font-size:11px;color:#718096;line-height:1.5;padding:25px 4px}
 </div>
 
 <div class="row">
-<button class="chip mode active" data-mode="all">Todas</button>
-<button class="chip mode" data-mode="better">Mejor pagadas</button>
-<button class="chip mode" data-mode="covered">Ganancia cubierta</button>
+<button class="chip mode active" data-mode="all">Oportunidades</button>
+<button class="chip mode" data-mode="better">Valor real entre casas</button>
+<button class="chip mode" data-mode="covered">Ganancia segura</button>
 </div>
 
 <main id="cards"><div class="empty">Cargando oportunidades…</div></main>
 
-<footer><b>V0.7 privada.</b> Priorizamos que el radar siga mostrando oportunidades reales del feed. Cuando las dos casas ofrecen exactamente el mismo mercado, las compara; si solo una casa devuelve ese mercado, lo indica sin inventar una comparación.</footer>
+<footer><b>V0.8 privada.</b> Priorizamos que el radar siga mostrando oportunidades reales del feed. Cuando las dos casas ofrecen exactamente el mismo mercado, las compara; si solo una casa devuelve ese mercado, lo indica sin inventar una comparación.</footer>
 </div>
 
 <script>
 let sport="all",mode="all";
-const cards=document.getElementById("cards"),statusEl=document.getElementById("status");
+const cards=document.getElementById("cards"),statusEl=document.getElementById("status"),cacheInfo=document.getElementById("cacheInfo");
 const esc=x=>String(x??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m]));
 const n=x=>Number.isFinite(Number(x))?Number(x).toFixed(2):(x??"—");
 const ev=x=>[x.home,x.away].filter(Boolean).join(" – ")||"Evento";
@@ -121,7 +125,7 @@ function covered(x){
     return l.link?`<a class="leg" style="color:inherit;text-decoration:none" href="${esc(l.link)}" target="_blank" rel="noopener noreferrer">${inner}</a>`:`<div class="leg">${inner}</div>`;
   }).join("");
   return `<article class="card">
-    <div class="top"><span class="badge covered">🔵 RESULTADO CUBIERTO</span><div class="metric">+${n(x.profit)}%<small>beneficio aprox.</small></div></div>
+    <div class="top"><span class="badge covered">🔒 GANANCIA SEGURA</span><div class="metric">+${n(x.profit)}%<small>beneficio aprox.</small></div></div>
     <div class="event">${esc(ev(x))}</div><div class="meta">${esc(x.league||x.sport||"")}</div>
     <div class="market"><div class="market-title">${esc(x.market_label||x.market||"Mercado")}</div>${legs}</div>
     <div class="msg">${esc(x.message)}</div>
@@ -131,11 +135,18 @@ function covered(x){
 async function load(){
   cards.innerHTML='<div class="empty">Buscando oportunidades…</div>';
   try{
-    const r=await fetch(`/api/opportunities?sport=${encodeURIComponent(sport)}&mode=${encodeURIComponent(mode)}`,{cache:"no-store"});
-    const d=await r.json();
-    const items=d.items||[];
-    cards.innerHTML=items.length?items.map(x=>x.type==="covered"?covered(x):better(x)).join("")
-      :'<div class="empty">Ahora mismo no hay oportunidades con estos filtros.<br><br>Prueba a actualizar en unos minutos.</div>';
+    let r=await fetch(`/api/opportunities?sport=all&mode=all`,{cache:"no-store"});
+    let d=await r.json();
+    let items=d.items||[];
+    if(sport!=="all") items=items.filter(x=>(x.sport||"").toLowerCase()===sport);
+    if(mode==="better") items=items.filter(x=>x.type!=="covered");
+    if(mode==="covered") items=items.filter(x=>x.type==="covered");
+    cacheInfo.textContent=d.from_cache
+      ? "Usando datos guardados para no agotar el límite gratuito."
+      : "Datos renovados ahora. Se reutilizarán durante unos minutos.";
+    cards.innerHTML=items.length
+      ? items.map(x=>x.type==="covered"?covered(x):better(x)).join("")
+      : '<div class="empty">Ahora mismo no hay oportunidades con estos filtros.<br><br>Prueba a actualizar en unos minutos.</div>';
   }catch(e){
     cards.innerHTML=`<div class="empty">No se ha podido consultar el radar.<br>${esc(e.message)}</div>`;
   }
@@ -507,29 +518,27 @@ def status():
 
 @app.route("/api/opportunities")
 def opportunities():
-    sport=(request.args.get("sport") or "all").lower()
-    mode=request.args.get("mode") or "all"
-    sports=list(ALLOWED_SPORTS) if sport=="all" else [sport]
-    sports=[s for s in sports if s in ALLOWED_SPORTS]
+    now = time.time()
+    if _RESPONSE_CACHE["items"] and now - _RESPONSE_CACHE["ts"] < CACHE_TTL:
+        return jsonify({"items": _RESPONSE_CACHE["items"], "from_cache": True})
+
+    sports=list(ALLOWED_SPORTS)
     out=[]
+    out.extend(get_value_cards(sports))
 
-    if mode in ("all","better"):
-        out.extend(get_value_cards(sports))
-
-    if mode in ("all","covered"):
-        try:
-            data=api_get("/arbitrage-bets",{
-                "bookmakers":",".join(BOOKMAKERS),
-                "limit":100,
-                "includeEventDetails":"true"
-            })
-            if isinstance(data,list):
-                for item in data:
-                    x=human_arb(item)
-                    if x["sport"] in sports:
-                        out.append(x)
-        except:
-            pass
+    try:
+        data=api_get("/arbitrage-bets",{
+            "bookmakers":",".join(BOOKMAKERS),
+            "limit":100,
+            "includeEventDetails":"true"
+        })
+        if isinstance(data,list):
+            for item in data:
+                x=human_arb(item)
+                if x["sport"] in sports:
+                    out.append(x)
+    except:
+        pass
 
     out.sort(
         key=lambda x:(
@@ -538,7 +547,10 @@ def opportunities():
         ),
         reverse=True
     )
-    return jsonify({"items":out[:80]})
+    items=out[:80]
+    _RESPONSE_CACHE["ts"]=now
+    _RESPONSE_CACHE["items"]=items
+    return jsonify({"items":items, "from_cache": False})
 
 if __name__=="__main__":
     app.run(host="0.0.0.0",port=int(os.getenv("PORT","8000")))
