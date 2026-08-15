@@ -7,7 +7,7 @@ from flask import Flask, jsonify, request, Response
 app = Flask(__name__)
 
 CACHE_TTL = 300
-_RESPONSE_CACHE = {"ts": 0, "items": []}
+_RESPONSE_CACHE = {"ts": 0, "items": [], "data_status": "ok", "data_message": ""}
 
 API_BASE = "https://api.odds-api.io/v3"
 BOOKMAKERS = ["Bet365", "William Hill"]
@@ -26,10 +26,10 @@ HTML = r"""<!doctype html>
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .shell{max-width:720px;margin:auto;padding:0 0 40px}
-header{display:flex;justify-content:space-between;gap:12px;background:linear-gradient(180deg,var(--green2),var(--green));padding:calc(env(safe-area-inset-top) + 22px) 18px 24px;border-radius:0 0 28px 28px;color:white}.eyebrow{font-size:11px;font-weight:900;letter-spacing:.13em;color:#c8f0da}
-h1{font-size:31px;line-height:1.03;margin:7px 0 8px}p{color:var(--muted);margin:0}
+header{display:flex;justify-content:space-between;gap:12px;background:linear-gradient(180deg,var(--green2),var(--green));padding:calc(env(safe-area-inset-top) + 18px) 18px 18px;border-radius:0 0 28px 28px;color:white}.eyebrow{font-size:11px;font-weight:900;letter-spacing:.13em;color:#c8f0da}
+h1{font-size:28px;line-height:1.02;margin:7px 0 7px}p{color:var(--muted);margin:0}
 .refresh{border:0;border-radius:14px;background:#fff;color:var(--green);font-weight:900;padding:11px 13px;height:42px}
-.status{margin:18px 16px 12px;padding:11px 13px;border:1px solid #d1ddd5;border-radius:14px;color:#315943;background:#eef6f1;font-size:13px}.ok{color:#b7f7df}
+.status{margin:18px 16px 10px;padding:11px 13px;border:1px solid #c8dfd1;border-radius:14px;color:#174d34;background:#edf7f1;font-size:13px;font-weight:700}.ok{color:#b7f7df}
 .row{display:flex;gap:8px;overflow:auto;padding:5px 16px}.chip{white-space:nowrap;border:1px solid var(--line);background:#fff;color:#3b4940;border-radius:999px;padding:10px 13px;font-weight:800}.chip.active{background:var(--green);color:white;border-color:var(--green)}
 #cards{display:grid;gap:12px;margin:14px 16px 0}.card{background:var(--panel);border:1px solid var(--line);border-radius:22px;padding:17px;box-shadow:0 7px 22px rgba(31,55,42,.07)}
 .top{display:flex;justify-content:space-between;gap:12px;align-items:center}.badge{font-size:12px;font-weight:900;padding:7px 9px;border-radius:999px}.better{background:#123c32;color:#75efc1}.covered{background:#17355d;color:#a6cbff}.review{background:#4b3410;color:#ffd68a}.single{background:#252d3e;color:#d7deea}
@@ -51,7 +51,7 @@ footer{font-size:11px;color:#7e8881;line-height:1.5;padding:25px 20px}
 <div class="shell">
 <header>
 <div>
-<div class="eyebrow">RADAR PRIVADO · V0.8</div>
+<div class="eyebrow">RADAR PRIVADO · V0.9</div>
 <h1>Encuentra tu oportunidad real.</h1>
 <p>Comparamos las casas por ti. Tú eliges.</p>
 </div>
@@ -67,7 +67,7 @@ footer{font-size:11px;color:#7e8881;line-height:1.5;padding:25px 20px}
 <button class="chip" data-sport="basketball">🏀 Basket</button>
 </div>
 
-<div class="row">
+<div class="mode-row">
 <button class="chip mode active" data-mode="all">Oportunidades</button>
 <button class="chip mode" data-mode="better">Valor real entre casas</button>
 <button class="chip mode" data-mode="covered">Ganancia segura</button>
@@ -75,7 +75,7 @@ footer{font-size:11px;color:#7e8881;line-height:1.5;padding:25px 20px}
 
 <main id="cards"><div class="empty">Cargando oportunidades…</div></main>
 
-<footer><b>V0.8 privada.</b> Priorizamos que el radar siga mostrando oportunidades reales del feed. Cuando las dos casas ofrecen exactamente el mismo mercado, las compara; si solo una casa devuelve ese mercado, lo indica sin inventar una comparación.</footer>
+<footer><b>V0.9 privada.</b> Las cuotas cambian en tiempo real. Confirma siempre el precio antes de apostar.</footer>
 </div>
 
 <script>
@@ -137,21 +137,36 @@ async function load(){
   try{
     let r=await fetch(`/api/opportunities?sport=all&mode=all`,{cache:"no-store"});
     let d=await r.json();
+
+    if(d.data_status==="rate_limited"){
+      cacheInfo.textContent="🟠 Datos temporalmente limitados";
+      cards.innerHTML='<div class="empty"><b>La fuente de cuotas ha alcanzado su límite temporal.</b><br><br>Reintentaremos automáticamente cuando vuelva a estar disponible.</div>';
+      return;
+    }
+
+    if(d.data_status==="error"){
+      cacheInfo.textContent="🔴 Fuente de datos no disponible";
+      cards.innerHTML=`<div class="empty"><b>No hemos podido leer las cuotas ahora mismo.</b><br><br>${esc(d.data_message||"Prueba de nuevo en unos minutos.")}</div>`;
+      return;
+    }
+
     let items=d.items||[];
     if(sport!=="all") items=items.filter(x=>(x.sport||"").toLowerCase()===sport);
     if(mode==="better") items=items.filter(x=>x.type!=="covered");
     if(mode==="covered") items=items.filter(x=>x.type==="covered");
+
     cacheInfo.textContent=d.from_cache
-      ? "Usando datos guardados para no agotar el límite gratuito."
-      : "Datos renovados ahora. Se reutilizarán durante unos minutos.";
+      ? "✓ Usando datos guardados para ahorrar consultas"
+      : "✓ Datos renovados ahora";
+
     cards.innerHTML=items.length
       ? items.map(x=>x.type==="covered"?covered(x):better(x)).join("")
-      : '<div class="empty">Ahora mismo no hay oportunidades con estos filtros.<br><br>Prueba a actualizar en unos minutos.</div>';
+      : '<div class="empty">Ahora mismo no hay oportunidades con estos filtros.<br><br>Seguiremos comprobando las cuotas.</div>';
   }catch(e){
-    cards.innerHTML=`<div class="empty">No se ha podido consultar el radar.<br>${esc(e.message)}</div>`;
+    cacheInfo.textContent="🔴 Sin conexión con la fuente de datos";
+    cards.innerHTML=`<div class="empty">No se ha podido consultar el Radar.<br>${esc(e.message)}</div>`;
   }
 }
-
 async function st(){
   try{
     const r=await fetch("/api/status"),s=await r.json();
@@ -171,13 +186,22 @@ st();load();
 def api_key():
     return os.getenv("ODDS_API_KEY","").strip()
 
+class APIError(Exception):
+    def __init__(self, status_code, message):
+        super().__init__(message)
+        self.status_code=status_code
+        self.message=message
+
 def api_get(path, params=None):
     if not api_key():
-        raise RuntimeError("Falta ODDS_API_KEY")
+        raise APIError(401, "Falta ODDS_API_KEY")
     p=dict(params or {})
     p["apiKey"]=api_key()
     r=requests.get(f"{API_BASE}{path}",params=p,timeout=20)
-    r.raise_for_status()
+    if r.status_code == 429:
+        raise APIError(429, "Límite temporal de consultas alcanzado")
+    if not r.ok:
+        raise APIError(r.status_code, f"Error de datos ({r.status_code})")
     return r.json()
 
 def fnum(x):
@@ -444,6 +468,9 @@ def make_card(v):
 
 def get_value_cards(sports):
     raw=[]
+    rate_limited=False
+    success_calls=0
+
     for bookmaker in BOOKMAKERS:
         for sport in sports:
             try:
@@ -452,26 +479,28 @@ def get_value_cards(sports):
                     "sport":sport,
                     "includeEventDetails":"true"
                 })
+                success_calls+=1
                 if isinstance(data,list):
                     for item in data:
                         v=parse_value(item)
                         if v["sport"] in ALLOWED_SPORTS and v["odds"] is not None:
                             raw.append(v)
-            except:
+            except APIError as e:
+                if e.status_code==429:
+                    rate_limited=True
                 continue
 
-    # Deduplicate the same event/market/line/side; keep strongest signal.
+    if success_calls==0 and rate_limited:
+        raise APIError(429, "Límite temporal de consultas alcanzado")
+
     dedup={}
     for v in raw:
         key=(v["event_id"],canonical_market(v["market"]),str(v["line"]),canonical_side(v["market"],v["market_obj"],v["side"]))
         if key not in dedup or v["provider_advantage"]>dedup[key]["provider_advantage"]:
             dedup[key]=v
 
-    # Limit expensive enrichment to strongest opportunities.
     candidates=sorted(dedup.values(),key=lambda x:x["provider_advantage"],reverse=True)[:35]
     cards=[make_card(v) for v in candidates]
-
-    # Compared opportunities first, then feed-only opportunities.
     cards.sort(key=lambda x:(1 if x["compared"] else 0,x["price_gap"] if x["compared"] else x["provider_advantage"]),reverse=True)
     return cards
 
@@ -518,39 +547,63 @@ def status():
 
 @app.route("/api/opportunities")
 def opportunities():
-    now = time.time()
-    if _RESPONSE_CACHE["items"] and now - _RESPONSE_CACHE["ts"] < CACHE_TTL:
-        return jsonify({"items": _RESPONSE_CACHE["items"], "from_cache": True})
+    now=time.time()
 
-    sports=list(ALLOWED_SPORTS)
-    out=[]
-    out.extend(get_value_cards(sports))
+    if _RESPONSE_CACHE["ts"] and now-_RESPONSE_CACHE["ts"]<CACHE_TTL:
+        return jsonify({
+            "items":_RESPONSE_CACHE["items"],
+            "from_cache":True,
+            "data_status":_RESPONSE_CACHE["data_status"],
+            "data_message":_RESPONSE_CACHE["data_message"]
+        })
 
     try:
-        data=api_get("/arbitrage-bets",{
-            "bookmakers":",".join(BOOKMAKERS),
-            "limit":100,
-            "includeEventDetails":"true"
-        })
-        if isinstance(data,list):
-            for item in data:
-                x=human_arb(item)
-                if x["sport"] in sports:
-                    out.append(x)
-    except:
-        pass
+        sports=list(ALLOWED_SPORTS)
+        out=[]
+        out.extend(get_value_cards(sports))
 
-    out.sort(
-        key=lambda x:(
-            2 if x["type"]=="covered" else 1 if x.get("compared") else 0,
-            x.get("profit",x.get("price_gap",x.get("provider_advantage",0))) or 0
-        ),
-        reverse=True
-    )
-    items=out[:80]
+        try:
+            data=api_get("/arbitrage-bets",{
+                "bookmakers":",".join(BOOKMAKERS),
+                "limit":100,
+                "includeEventDetails":"true"
+            })
+            if isinstance(data,list):
+                for item in data:
+                    x=human_arb(item)
+                    if x["sport"] in sports:
+                        out.append(x)
+        except APIError as e:
+            if e.status_code==429 and not out:
+                raise
+
+        out.sort(
+            key=lambda x:(
+                2 if x["type"]=="covered" else 1 if x.get("compared") else 0,
+                x.get("profit",x.get("price_gap",x.get("provider_advantage",0))) or 0
+            ),
+            reverse=True
+        )
+        items=out[:80]
+        status="ok"
+        message=""
+    except APIError as e:
+        items=[]
+        status="rate_limited" if e.status_code==429 else "error"
+        message=("La fuente de cuotas ha alcanzado su límite temporal. Reintentaremos automáticamente."
+                 if e.status_code==429 else e.message)
+
     _RESPONSE_CACHE["ts"]=now
     _RESPONSE_CACHE["items"]=items
-    return jsonify({"items":items, "from_cache": False})
+    _RESPONSE_CACHE["data_status"]=status
+    _RESPONSE_CACHE["data_message"]=message
+
+    return jsonify({
+        "items":items,
+        "from_cache":False,
+        "data_status":status,
+        "data_message":message
+    })
 
 if __name__=="__main__":
     app.run(host="0.0.0.0",port=int(os.getenv("PORT","8000")))
