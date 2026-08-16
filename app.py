@@ -8,7 +8,7 @@ from flask import Flask, jsonify, request, Response
 app = Flask(__name__)
 
 CACHE_TTL = 300
-_RESPONSE_CACHE = {"ts": 0, "items": [], "data_status": "ok", "data_message": ""}
+_RESPONSE_CACHE = {}
 
 API_BASE = "https://api.odds-api.io/v3"
 BOOKMAKERS = ["Bet365", "William Hill"]
@@ -46,12 +46,12 @@ header>div{min-width:0}.eyebrow{font-size:11px;font-weight:900;letter-spacing:.1
 </head>
 <body>
 <div class="shell">
-<header><div><div class="eyebrow">RADAR PRIVADO · V1.1</div><h1>Encuentra tu oportunidad real.</h1><p>Comparamos las casas por ti. Tú eliges.</p></div><button class="refresh" id="refresh">Actualizar</button></header>
+<header><div><div class="eyebrow">RADAR PRIVADO · V1.3</div><h1>Encuentra tu oportunidad real.</h1><p>Comparamos las casas por ti. Tú eliges.</p></div><button class="refresh" id="refresh">Actualizar</button></header>
 <div id="status" class="status">Comprobando conexión…</div><div id="cacheInfo" class="cache">Datos guardados temporalmente para ahorrar consultas.</div>
 <div class="row"><button class="chip active" data-sport="all">Todo</button><button class="chip" data-sport="football">⚽ Fútbol</button><button class="chip" data-sport="tennis">🎾 Tenis</button><button class="chip" data-sport="basketball">🏀 Basket</button></div>
 <div class="mode-row"><button class="chip mode active" data-mode="all">Oportunidades</button><button class="chip mode" data-mode="better">Valor real entre casas</button><button class="chip mode" data-mode="covered">Ganancia segura</button></div>
 <main id="cards"><div class="empty">Cargando oportunidades…</div></main>
-<footer><b>V1.1 privada.</b> El Radar bloquea comparaciones sospechosas y exige coincidencia de mercado y línea. En Ganancia segura solo muestra arbitrajes que pasan la verificación matemática. Confirma siempre evento, mercado y cuota antes de apostar.</footer>
+<footer><b>V1.3 privada.</b> El Radar exige coincidencia de evento, periodo, mercado, línea y selección. En Ganancia segura solo muestra arbitrajes que pasan la verificación matemática. Confirma siempre evento, mercado y cuota antes de apostar.</footer>
 </div>
 <script>
 let sport="all",mode="all";
@@ -69,7 +69,40 @@ function covered(x){
  const tags=[x.asian?'<span class="tag">HÁNDICAP/TOTAL ASIÁTICO</span>':'',x.split?'<span class="tag split">ASIAN SPLIT · 0.25/0.75</span>':''].join("");
  return `<article class="card"><div class="top"><span class="badge covered">🔒 SUREBET VERIFICADA</span><div class="metric">+${n(x.profit)}%<small>beneficio mínimo</small></div></div><div class="event">${esc(ev(x))}</div><div class="meta">${esc(x.league||x.sport||"")}</div><div class="tags">${tags}</div><div class="market"><div class="market-title">${esc(x.market_label||x.market||"Mercado")}</div>${legs}<div class="profitbox"><div class="stat"><b>100 €</b><span>CAPITAL REPARTIDO</span></div><div class="stat"><b>+${n(x.profit_eur??x.profit)} €</b><span>GANANCIA MÍNIMA</span></div></div></div><div class="msg">${esc(x.message)}</div><div class="fresh">Verificación matemática del peor escenario</div></article>`;
 }
-async function load(){cards.innerHTML='<div class="empty">Buscando oportunidades…</div>';try{let r=await fetch('/api/opportunities?sport=all&mode=all',{cache:"no-store"});let d=await r.json();if(d.data_status==="rate_limited"){cacheInfo.textContent="🟠 Datos temporalmente limitados";cards.innerHTML='<div class="empty"><b>La fuente de cuotas ha alcanzado su límite temporal.</b><br><br>Reintentaremos cuando vuelva a estar disponible.</div>';return}if(d.data_status==="error"){cacheInfo.textContent="🔴 Fuente de datos no disponible";cards.innerHTML=`<div class="empty"><b>No hemos podido leer las cuotas ahora mismo.</b><br><br>${esc(d.data_message||"Prueba de nuevo en unos minutos.")}</div>`;return}let items=d.items||[];if(sport!=="all")items=items.filter(x=>(x.sport||"").toLowerCase()===sport);if(mode==="better")items=items.filter(x=>x.type!=="covered");if(mode==="covered")items=items.filter(x=>x.type==="covered");cacheInfo.textContent=d.from_cache?"✓ Usando datos guardados para ahorrar consultas":"✓ Datos renovados ahora";cards.innerHTML=items.length?items.map(x=>x.type==="covered"?covered(x):better(x)).join(""):(mode==="covered"?'<div class="empty"><b>No hay una surebet verificada ahora mismo.</b><br><br>Estamos priorizando hándicap asiático, totales asiáticos y mercados completos. No mostramos una oportunidad si no supera la comprobación del peor escenario.</div>':'<div class="empty">Ahora mismo no hay oportunidades con estos filtros.<br><br>Seguiremos comprobando las cuotas.</div>')}catch(e){cacheInfo.textContent="🔴 Sin conexión con la fuente de datos";cards.innerHTML=`<div class="empty">No se ha podido consultar el Radar.<br>${esc(e.message)}</div>`}}
+async function load(){
+  cards.innerHTML='<div class="empty">Buscando oportunidades…</div>';
+  try{
+    const r=await fetch(`/api/opportunities?sport=${encodeURIComponent(sport)}&mode=${encodeURIComponent(mode)}`,{cache:"no-store"});
+    const d=await r.json();
+
+    if(d.data_status==="rate_limited"){
+      cacheInfo.textContent="🟠 Datos temporalmente limitados";
+      cards.innerHTML='<div class="empty"><b>La fuente de cuotas ha alcanzado su límite temporal.</b><br><br>Prueba de nuevo cuando vuelva a estar disponible.</div>';
+      return;
+    }
+    if(d.data_status==="error"){
+      cacheInfo.textContent="🔴 Fuente de datos no disponible";
+      cards.innerHTML=`<div class="empty"><b>No hemos podido leer las cuotas ahora mismo.</b><br><br>${esc(d.data_message||"Prueba de nuevo en unos minutos.")}</div>`;
+      return;
+    }
+
+    const items=d.items||[];
+    cacheInfo.textContent=d.from_cache
+      ? "✓ Usando datos guardados para ahorrar consultas"
+      : "✓ Datos renovados ahora";
+
+    let emptyMsg="Ahora mismo no hay oportunidades con estos filtros.";
+    if(mode==="better") emptyMsg="Ahora mismo no encontramos diferencias confirmadas entre Bet365 y William Hill con estos filtros.";
+    if(mode==="covered") emptyMsg="Ahora mismo el proveedor no devuelve ninguna ganancia segura entre Bet365 y William Hill con estos filtros.";
+
+    cards.innerHTML=items.length
+      ? items.map(x=>x.type==="covered"?covered(x):better(x)).join("")
+      : `<div class="empty">${emptyMsg}<br><br>Seguiremos comprobando las cuotas.</div>`;
+  }catch(e){
+    cacheInfo.textContent="🔴 Sin conexión con la fuente de datos";
+    cards.innerHTML=`<div class="empty">No se ha podido consultar el Radar.<br>${esc(e.message)}</div>`;
+  }
+}
 async function st(){try{const r=await fetch('/api/status'),s=await r.json();statusEl.textContent=s.ok?`● Conectado · ${s.bookmakers.join(" + ")}`:`● ${s.message}`;if(s.ok)statusEl.classList.add("ok")}catch(e){statusEl.textContent="● Sin conexión"}}
 document.querySelectorAll('[data-sport]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-sport]').forEach(x=>x.classList.remove('active'));b.classList.add('active');sport=b.dataset.sport;load()});document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-mode]').forEach(x=>x.classList.remove('active'));b.classList.add('active');mode=b.dataset.mode;load()});document.getElementById('refresh').onclick=load;st();load();
 </script></body></html>"""
@@ -158,6 +191,27 @@ def canonical_market(name):
     if "draw no bet" in n or "dnb" in n: return "dnb"
     return n
 
+def market_period(name):
+    n=compact(name)
+    patterns=[
+        ("set1",r"\b(?:1st|first|1)\s*set\b|\bset\s*1\b|\b1[oºª]?\s*set\b"),
+        ("set2",r"\b(?:2nd|second|2)\s*set\b|\bset\s*2\b|\b2[oºª]?\s*set\b"),
+        ("set3",r"\b(?:3rd|third|3)\s*set\b|\bset\s*3\b|\b3[oºª]?\s*set\b"),
+        ("half1",r"\b(?:1st|first)\s*half\b|\b1h\b|\b1[aª]?\s*(?:parte|mitad)\b"),
+        ("half2",r"\b(?:2nd|second)\s*half\b|\b2h\b|\b2[aª]?\s*(?:parte|mitad)\b"),
+        ("q1",r"\b(?:1st|first)\s*quarter\b|\bq1\b|\b1q\b|\b1[oº]?\s*cuarto\b"),
+        ("q2",r"\b(?:2nd|second)\s*quarter\b|\bq2\b|\b2q\b|\b2[oº]?\s*cuarto\b"),
+        ("q3",r"\b(?:3rd|third)\s*quarter\b|\bq3\b|\b3q\b|\b3[oº]?\s*cuarto\b"),
+        ("q4",r"\b(?:4th|fourth)\s*quarter\b|\bq4\b|\b4q\b|\b4[oº]?\s*cuarto\b"),
+    ]
+    for key,pat in patterns:
+        if re.search(pat,n,re.I):
+            return key
+    return "match"
+
+def market_key(name):
+    return (canonical_market(name),market_period(name))
+
 def line_value(market,row=None):
     row=row or {}
     for source in (row,market):
@@ -169,18 +223,31 @@ def line_value(market,row=None):
 
 def label_for_side(market,side):
     v=market.get(side)
-    return str(v).strip() if v not in (None,"") else ""
+    if v in (None,""):
+        return ""
+    text=str(v).strip()
+    try:
+        float(text)
+        return ""
+    except:
+        return text
 
 def human_market(name,sport):
     c=canonical_market(name)
-    if c=="ml": return "Ganador del partido"
-    if c=="spread": return "Hándicap asiático" if "asian" in compact(name) else "Hándicap"
-    if c=="totals":
+    period=market_period(name)
+    ptxt={"set1":"1.º set","set2":"2.º set","set3":"3.º set",
+          "half1":"1.ª parte","half2":"2.ª parte",
+          "q1":"1.º cuarto","q2":"2.º cuarto","q3":"3.º cuarto","q4":"4.º cuarto",
+          "match":""}.get(period,"")
+    if c=="ml": base="Ganador del partido"
+    elif c=="spread": base="Hándicap asiático" if "asian" in compact(name) else "Hándicap"
+    elif c=="totals":
         base="Total de juegos" if sport=="tennis" else ("Total de puntos" if sport=="basketball" else "Total de goles")
-        return f"{base} · Asiático" if "asian" in compact(name) else base
-    if c=="btts": return "Marcan ambos"
-    if c=="dnb": return "Empate no cuenta"
-    return name or "Mercado"
+        if "asian" in compact(name): base=f"{base} · Asiático"
+    elif c=="btts": base="Marcan ambos"
+    elif c=="dnb": base="Empate no cuenta"
+    else: base=name or "Mercado"
+    return f"{ptxt} · {base}" if ptxt else base
 
 def canonical_side(market_name,market,side):
     s=compact(side)
@@ -234,39 +301,42 @@ def value_direct_link(bo,side):
         or ""
     )
 
+def bookmaker_value_odd(bo,market,market_name,side):
+    side=compact(side)
+    direct=fnum(bo.get(side))
+    if direct is not None:
+        return direct
+    cm=canonical_market(market_name)
+    if cm=="totals":
+        cs=canonical_side(market_name,market,side)
+        if cs=="over":
+            return fnum(bo.get("over")) or fnum(bo.get("home"))
+        if cs=="under":
+            return fnum(bo.get("under")) or fnum(bo.get("away"))
+    if side=="home": return fnum(bo.get("home"))
+    if side=="away": return fnum(bo.get("away"))
+    if side=="draw": return fnum(bo.get("draw"))
+    return None
+
 def parse_value(item):
     event=item.get("event") or {}
     market=item.get("market") or {}
     bo=item.get("bookmakerOdds") or {}
     side=(item.get("betSide") or "").lower()
-    odd=fnum(bo.get(side))
-    if odd is None:
-        odd=fnum(
-            bo.get("home") if side=="home"
-            else bo.get("away") if side=="away"
-            else bo.get("draw") if side=="draw"
-            else None
-        )
-
+    market_name=market.get("name","Mercado")
+    odd=bookmaker_value_odd(bo,market,market_name,side)
     sport=sport_slug(event.get("sport"))
-    line=line_value(market)
+    line=line_value(bo)
+    if line is None:
+        line=line_value(market)
     return {
-        "event_id":item.get("eventId"),
-        "sport":sport,
-        "league":league_name(event.get("league")),
-        "home":event.get("home",""),
-        "away":event.get("away",""),
-        "market":market.get("name","Mercado"),
-        "market_obj":market,
-        "line":line,
-        "side":side,
-        "bookmaker":item.get("bookmaker",""),
-        "odds":odd,
-        "link":value_direct_link(bo,side),
-        "provider_advantage":ev_adv(item.get("expectedValue",0)),
+        "event_id":item.get("eventId"),"sport":sport,"league":league_name(event.get("league")),
+        "home":event.get("home",""),"away":event.get("away",""),"market":market_name,
+        "market_obj":market,"line":line,"side":side,"bookmaker":item.get("bookmaker",""),
+        "odds":odd,"link":value_direct_link(bo,side),"provider_advantage":ev_adv(item.get("expectedValue",0)),
         "updated_at":item.get("expectedValueUpdatedAt",""),
-        "starts_at": event.get("startsAt") or event.get("startTime") or event.get("commenceTime") or event.get("date") or "",
-        "event_profile": sorted(event_profile(event.get("home",""),event.get("away",""),league_name(event.get("league"))))
+        "starts_at":event.get("startsAt") or event.get("startTime") or event.get("commenceTime") or event.get("date") or "",
+        "event_profile":sorted(event_profile(event.get("home",""),event.get("away",""),league_name(event.get("league"))))
     }
 
 def get_event_odds(event_id):
@@ -288,7 +358,7 @@ def get_event_odds(event_id):
     return {}
 
 def market_equiv(a,b):
-    return canonical_market(a)==canonical_market(b)
+    return market_key(a)==market_key(b)
 
 def line_equiv(a,b,market_name=""):
     cm=canonical_market(market_name)
@@ -299,62 +369,79 @@ def line_equiv(a,b,market_name=""):
     try:return abs(float(a)-float(b))<1e-9
     except:return str(a)==str(b)
 
-def extract_other_quote(event_data, target_book, target):
+def extract_other_quote(event_data,target_book,target):
     event_data=event_data or {}
-    # Never trust an odds payload solely because the provider reused an event id.
-    eh=event_data.get("home","")
-    ea=event_data.get("away","")
+    eh,ea=event_data.get("home",""),event_data.get("away","")
     el=league_name(event_data.get("league"))
     if eh or ea or el:
-        p1=set(target.get("event_profile") or [])
-        p2=event_profile(eh,ea,el)
-        if not profiles_compatible(p1,p2):
+        if not profiles_compatible(set(target.get("event_profile") or []),event_profile(eh,ea,el)):
             return None
 
     books=event_data.get("bookmakers") or {}
     markets=books.get(target_book) or []
-    target_market=target["market"]
-    target_line=target["line"]
+    target_market,target_line=target["market"],target["line"]
     target_side=canonical_side(target_market,target["market_obj"],target["side"])
-    target_label=label_for_side(target["market_obj"],target["side"])
+    target_cm=canonical_market(target_market)
 
     for market in markets:
         mname=market.get("name") or ""
         if not market_equiv(mname,target_market):
             continue
-        rows=market.get("odds") or []
-        for row in rows:
+        for row in market.get("odds") or []:
+            if not isinstance(row,dict):
+                continue
             row_line=line_value(market,row)
             if not line_equiv(row_line,target_line,target_market):
                 continue
 
-            candidates=[]
-            for side in ("home","away","draw","over","under"):
+            if target_cm=="totals":
+                key="over" if target_side=="over" else "under" if target_side=="under" else None
+                if key:
+                    val=fnum(row.get(key))
+                    if val is None:
+                        val=fnum(row.get("home" if key=="over" else "away"))
+                    if val is not None:
+                        link=(row.get(f"{key}DirectLink") or row.get("directLink") or row.get("href")
+                              or market.get("href") or market.get("directLink") or "")
+                        return {"odds":val,"link":link,"label":str(row.get("label") or ""),"line":row_line}
+
+            for side in ("home","away","draw"):
                 val=fnum(row.get(side))
                 if val is None: continue
-                cs=canonical_side(mname,market,side)
-                raw_label=label_for_side(market,side)
-                if cs!=target_side:
+                if canonical_side(mname,market,side)!=target_side:
                     continue
-                if not participant_compatible(target_label,raw_label):
-                    continue
-                score=2
-                if meaningful_label(target_label) and meaningful_label(raw_label) and compact(target_label)==compact(raw_label): score+=4
-                candidates.append((score,side,val,raw_label))
-
-            if not candidates:
-                continue
-            candidates.sort(reverse=True,key=lambda x:x[0])
-            _,side,val,raw_label=candidates[0]
-            link=(row.get(f"{side}DirectLink") or row.get("directLink") or row.get("href") or market.get("href") or market.get("directLink") or "")
-            return {"odds":val,"link":link,"label":raw_label,"line":row_line}
+                row_label=str(row.get("label") or "").strip()
+                if target_cm=="spread" and row_label:
+                    expected=target["home"] if target_side=="home" else target["away"] if target_side=="away" else ""
+                    if expected and not participant_compatible(expected,row_label):
+                        continue
+                link=(row.get(f"{side}DirectLink") or row.get("directLink") or row.get("href")
+                      or market.get("href") or market.get("directLink") or "")
+                return {"odds":val,"link":link,"label":row_label,"line":row_line}
     return None
 
-def make_card(v):
+def get_events_odds_batch(event_ids):
+    out={}
+    ids=[str(x) for x in dict.fromkeys(event_ids) if x is not None]
+    for i in range(0,len(ids),10):
+        chunk=ids[i:i+10]
+        try:
+            data=api_get("/odds/multi",{"eventIds":",".join(chunk),"bookmakers":",".join(BOOKMAKERS)})
+            if isinstance(data,list):
+                for event in data:
+                    eid=event.get("id") or event.get("eventId")
+                    if eid is not None:
+                        out[str(eid)]=event
+        except APIError:
+            continue
+    return out
+
+def make_card(v,event_data=None):
     other_book=BOOKMAKERS[1] if v["bookmaker"]==BOOKMAKERS[0] else BOOKMAKERS[0]
     other=None
     if v["event_id"] is not None:
-        event_data=get_event_odds(v["event_id"])
+        if event_data is None:
+            event_data=get_event_odds(v["event_id"])
         other=extract_other_quote(event_data,other_book,v)
 
     prices=[]
@@ -418,14 +505,239 @@ def get_value_cards(sports):
 
     dedup={}
     for v in raw:
-        key=(v["event_id"],canonical_market(v["market"]),str(v["line"]),canonical_side(v["market"],v["market_obj"],v["side"]))
+        key=(v["event_id"],market_key(v["market"]),str(v["line"]),canonical_side(v["market"],v["market_obj"],v["side"]))
         if key not in dedup or v["provider_advantage"]>dedup[key]["provider_advantage"]:
             dedup[key]=v
 
     candidates=sorted(dedup.values(),key=lambda x:x["provider_advantage"],reverse=True)[:35]
-    cards=[c for c in (make_card(v) for v in candidates) if c is not None]
+    odds_map=get_events_odds_batch([v["event_id"] for v in candidates])
+    cards=[]
+    for v in candidates:
+        card=make_card(v,odds_map.get(str(v["event_id"])))
+        if card is not None:
+            cards.append(card)
     cards.sort(key=lambda x:(1 if x["compared"] else 0,x["price_gap"] if x["compared"] else x["provider_advantage"]),reverse=True)
     return cards
+
+
+def _quote_label(cm, side, line, home, away, row_label=""):
+    if cm=="ml":
+        return home if side=="home" else away if side=="away" else "Empate"
+    if cm=="spread":
+        who=home if side=="home" else away
+        if line is None:
+            return who
+        sign="+" if float(line)>0 else ""
+        return f"{who} {sign}{float(line):g}"
+    if cm=="totals":
+        if line is None:
+            return "Más" if side=="over" else "Menos"
+        return f"{'Más' if side=='over' else 'Menos'} de {float(line):g}"
+    return row_label or side
+
+def _market_quotes(event, bookmaker):
+    """
+    Normalize the main markets directly from /odds:
+    ML, Spread and Totals, preserving period + line + selection.
+    """
+    books=(event.get("bookmakers") or {})
+    markets=books.get(bookmaker) or []
+    home,away=event.get("home",""),event.get("away","")
+    sport=sport_slug(event.get("sport"))
+    out={}
+
+    for market in markets:
+        name=market.get("name") or ""
+        cm=canonical_market(name)
+        if cm not in {"ml","spread","totals"}:
+            continue
+        period=market_period(name)
+
+        for row in market.get("odds") or []:
+            if not isinstance(row,dict):
+                continue
+            line=line_value(market,row)
+            row_label=str(row.get("label") or "").strip()
+
+            if cm=="ml":
+                sides=("home","draw","away")
+            elif cm=="spread":
+                sides=("home","away")
+            else:
+                sides=("over","under")
+
+            for side in sides:
+                odd=fnum(row.get(side))
+                if odd is None and cm=="totals":
+                    # Some books encode totals as home/away.
+                    odd=fnum(row.get("home" if side=="over" else "away"))
+                if odd is None:
+                    continue
+
+                # ML has no line. Spread/totals must have an explicit line.
+                if cm in {"spread","totals"} and line is None:
+                    continue
+
+                # Player/team-labelled props are deliberately excluded here.
+                # This engine is for same-event main markets only.
+                label_key=""
+                if row_label and cm not in {"ml","spread","totals"}:
+                    label_key=compact(row_label)
+
+                key=(cm,period,str(line) if line is not None else "",side,label_key)
+                link=(row.get(f"{side}DirectLink") or row.get("directLink") or row.get("href")
+                      or market.get("directLink") or market.get("href") or "")
+                out[key]={
+                    "odds":odd,
+                    "link":link,
+                    "market_label":human_market(name,sport),
+                    "selection_label":_quote_label(cm,side,line,home,away,row_label),
+                    "line":line,
+                    "side":side
+                }
+    return out
+
+def _fetch_events_for_compare(sport, limit=20):
+    data=api_get("/events",{"sport":sport,"limit":limit})
+    return data if isinstance(data,list) else []
+
+def get_direct_comparisons(sports):
+    cards=[]
+    for sport in sports:
+        try:
+            events=_fetch_events_for_compare(sport,20)
+        except APIError:
+            continue
+
+        ids=[str(e.get("id")) for e in events if e.get("id") is not None]
+        odds_map=get_events_odds_batch(ids)
+
+        for event in events:
+            eid=str(event.get("id"))
+            full=odds_map.get(eid)
+            if not full:
+                continue
+
+            qa=_market_quotes(full,BOOKMAKERS[0])
+            qb=_market_quotes(full,BOOKMAKERS[1])
+            shared=set(qa)&set(qb)
+
+            for key in shared:
+                a,b=qa[key],qb[key]
+                if not a.get("odds") or not b.get("odds"):
+                    continue
+
+                if a["odds"]>=b["odds"]:
+                    best_book,best,other_book,other=BOOKMAKERS[0],a,BOOKMAKERS[1],b
+                else:
+                    best_book,best,other_book,other=BOOKMAKERS[1],b,BOOKMAKERS[0],a
+
+                gap=(best["odds"]/other["odds"]-1)*100
+                if gap<1.0 or gap>=MAX_CONFIRMED_PRICE_GAP:
+                    continue
+
+                cards.append({
+                    "type":"better_price",
+                    "sport":sport_slug(full.get("sport")),
+                    "league":league_name(full.get("league")),
+                    "home":full.get("home",""),
+                    "away":full.get("away",""),
+                    "market_label":best["market_label"],
+                    "selection_label":best["selection_label"],
+                    "prices":[
+                        {"bookmaker":BOOKMAKERS[0],"odds":round(a["odds"],3),
+                         "link":a.get("link",""),"best":BOOKMAKERS[0]==best_book},
+                        {"bookmaker":BOOKMAKERS[1],"odds":round(b["odds"],3),
+                         "link":b.get("link",""),"best":BOOKMAKERS[1]==best_book}
+                    ],
+                    "compared":True,
+                    "price_gap":round(gap,2),
+                    "provider_advantage":0,
+                    "message":f"{best_book} ofrece {best['odds']:.2f} frente a {other['odds']:.2f} en {other_book}.",
+                    "freshness":"Comparación directa confirmada"
+                })
+
+    # One card per exact event/market/selection; strongest differences first.
+    unique={}
+    for c in cards:
+        k=(c["home"],c["away"],c["market_label"],c["selection_label"])
+        if k not in unique or c["price_gap"]>unique[k]["price_gap"]:
+            unique[k]=c
+    return sorted(unique.values(),key=lambda x:x["price_gap"],reverse=True)[:100]
+
+def human_arb_provider(item):
+    """
+    Trust the dedicated arbitrage endpoint for opportunity detection.
+    We keep only basic sanity checks and use the provider's optimalStakes/profitMargin.
+    """
+    event=item.get("event") or {}
+    sport=sport_slug(event.get("sport"))
+    if sport not in ALLOWED_SPORTS:
+        return None
+
+    raw_legs=item.get("legs") or []
+    legs=[x for x in raw_legs if x.get("bookmaker") in BOOKMAKERS]
+    if len(legs)<2 or len({x.get("bookmaker") for x in legs})<2:
+        return None
+    if len(legs)!=len(raw_legs):
+        return None
+
+    try:
+        profit=float(item.get("profitMargin") or 0)
+    except:
+        return None
+    if profit<=0 or profit>MAX_VERIFIED_ARB_PROFIT:
+        return None
+
+    stakes={}
+    for s in item.get("optimalStakes") or []:
+        try:
+            stake=float(s.get("stake"))
+        except:
+            continue
+        stakes[(s.get("bookmaker"),compact(s.get("side")))]=stake
+
+    # Normalize supplied stakes to €100 when available.
+    raw_stakes=[]
+    for leg in legs:
+        val=stakes.get((leg.get("bookmaker"),compact(leg.get("side"))))
+        raw_stakes.append(val if val and val>0 else 0)
+    total=sum(raw_stakes)
+
+    display=[]
+    for i,leg in enumerate(legs):
+        try:
+            odd=float(leg.get("odds"))
+        except:
+            return None
+        if odd<=1:
+            return None
+
+        stake=(raw_stakes[i]/total*100) if total>0 else None
+        display.append({
+            "bookmaker":leg.get("bookmaker",""),
+            "selection":leg.get("label") or leg.get("side") or "",
+            "odds":odd,
+            "stake":round(stake,2) if stake is not None else None,
+            "link":leg.get("directLink") or leg.get("href") or ""
+        })
+
+    market=item.get("market") or {}
+    mname=market.get("name") or market.get("label") or "Mercado"
+    return {
+        "type":"covered",
+        "sport":sport,
+        "league":league_name(event.get("league")),
+        "home":event.get("home",""),
+        "away":event.get("away",""),
+        "market_label":human_market(mname,sport),
+        "profit":round(profit,2),
+        "profit_eur":round(profit,2),
+        "legs":display,
+        "asian":canonical_market(mname) in {"spread","totals"},
+        "split":False,
+        "message":"Arbitraje activo detectado por el proveedor. Reparto normalizado sobre 100 €."
+    }
 
 def _line_from_label(label):
     text=str(label or "").replace(",", ".")
@@ -610,58 +922,66 @@ def status():
 @app.route("/api/opportunities")
 def opportunities():
     now=time.time()
+    sport=(request.args.get("sport") or "all").lower()
+    mode=(request.args.get("mode") or "all").lower()
 
-    if _RESPONSE_CACHE["ts"] and now-_RESPONSE_CACHE["ts"]<CACHE_TTL:
+    sports=list(ALLOWED_SPORTS) if sport=="all" else [sport]
+    sports=[s for s in sports if s in ALLOWED_SPORTS]
+
+    cache_key=f"{sport}:{mode}"
+    cached=_RESPONSE_CACHE.get(cache_key)
+    if cached and now-cached["ts"]<CACHE_TTL:
         return jsonify({
-            "items":_RESPONSE_CACHE["items"],
+            "items":cached["items"],
             "from_cache":True,
-            "data_status":_RESPONSE_CACHE["data_status"],
-            "data_message":_RESPONSE_CACHE["data_message"]
+            "data_status":cached["data_status"],
+            "data_message":cached["data_message"]
         })
 
     try:
-        sports=list(ALLOWED_SPORTS)
-        out=[]
-        out.extend(get_value_cards(sports))
+        if mode=="better":
+            # Dedicated direct Bet365 <-> William Hill comparison.
+            items=get_direct_comparisons(sports)
 
-        try:
+        elif mode=="covered":
+            # Dedicated provider arbitrage feed. Do not re-derive settlement rules.
+            items=[]
             data=api_get("/arbitrage-bets",{
                 "bookmakers":",".join(BOOKMAKERS),
-                "limit":100,
+                "limit":500,
                 "includeEventDetails":"true"
             })
             if isinstance(data,list):
                 for item in data:
-                    x=human_arb(item)
+                    x=human_arb_provider(item)
                     if x and x["sport"] in sports:
-                        out.append(x)
-        except APIError as e:
-            if e.status_code==429 and not out:
-                raise
+                        items.append(x)
+            items.sort(key=lambda x:x.get("profit",0),reverse=True)
 
-        out.sort(
-            key=lambda x:(
-                3 if x["type"]=="covered" and x.get("asian") else 2 if x["type"]=="covered" else 1 if x.get("compared") else 0,
-                x.get("profit",x.get("price_gap",x.get("provider_advantage",0))) or 0
-            ),
-            reverse=True
-        )
-        items=out[:80]
+        else:
+            # Provider-detected value opportunities. May contain one-book-only cards.
+            items=get_value_cards(sports)
+            items.sort(
+                key=lambda x:(1 if x.get("compared") else 0,
+                              x.get("price_gap",x.get("provider_advantage",0)) or 0),
+                reverse=True
+            )
+
         status="ok"
         message=""
     except APIError as e:
         items=[]
         status="rate_limited" if e.status_code==429 else "error"
-        message=("La fuente de cuotas ha alcanzado su límite temporal. Reintentaremos automáticamente."
+        message=("La fuente de cuotas ha alcanzado su límite temporal."
                  if e.status_code==429 else e.message)
 
-    _RESPONSE_CACHE["ts"]=now
-    _RESPONSE_CACHE["items"]=items
-    _RESPONSE_CACHE["data_status"]=status
-    _RESPONSE_CACHE["data_message"]=message
+    _RESPONSE_CACHE[cache_key]={
+        "ts":now,"items":items[:100],
+        "data_status":status,"data_message":message
+    }
 
     return jsonify({
-        "items":items,
+        "items":items[:100],
         "from_cache":False,
         "data_status":status,
         "data_message":message
